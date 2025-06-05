@@ -17,24 +17,6 @@ This project implements a multi-agent AI system using **LangGraph** and **Groq**
 - [Groq](https://groq.com/) LLM API
 - Python 3.11+
 
-## Setup
-
-1. **Clone the repo**
-```bash
-git clone https://github.com/your-username/multi-agent-photography-assistant.git
-cd multi-agent-photography-assistant
-```
-
-2. **Install dependencies**
-```bash
-pip install -r requirements.txt
-```
-
-3. **Set Groq API Key**
-```bash
-export GROQ_API_KEY="your_api_key_here"
-```
-
 ## Usage
 
 Run the graph using a single prompt like:
@@ -68,4 +50,3 @@ This project is licensed under the MIT License.
 
 ---
 
-Feel free to fork and customize for other domains like wildlife photography, portraits, or event settings.
