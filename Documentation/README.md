@@ -1,14 +1,34 @@
-# Multi-Agent Chatbot Documentation
+# Multi-Agent Photography Assistant — Documentation
 
 ## Overview
-This is a multi-agent chatbot system built with LangGraph, ChromaDB, and Groq API. A supervisor node retrieves relevant material from a document corpus, then two specialized agents analyze the query in sequence and a response generator produces the final answer.
+
+A multi-agent assistant built with LangGraph, ChromaDB, and the Groq API, driven from
+a Streamlit web UI. It answers photography questions from **your own documents**, and
+when your documents don't cover the question it escalates — first to a web search, and
+finally to an explicit "I don't have relevant information" rather than a guess.
+
+The defining behaviour is the **escalation ladder**. Every source of context is graded
+by a supervisor agent before it is allowed to produce an answer:
+
+```
+attached files  →  supervisor  ─approved→  Agent 1 → Agent 2 → Editor → answer
+      ↓ rejected
+archive search  →  supervisor  ─approved→  Agent 1 → Agent 2 → Editor → answer
+      ↓ rejected
+web search      →  supervisor  ─approved→  Agent 1 → Agent 2 → Editor → answer
+      ↓ rejected
+"I don't have relevant information"
+```
 
 ## Project Structure
 
 ```
-Multi-Agent/
-├── multiagent_chatbot.py      # Main chatbot application
-├── ingest_documents.py        # Document ingestion script (folder → vector DB)
+Multi-Agent-Photography-Assistant/
+├── streamlit_app.py           # The application — UI + agent pipeline
+├── vintage_theme.py           # All styling: palette, CSS, layout helpers
+├── .streamlit/config.toml     # Streamlit's own theme settings
+├── ingest_documents.py        # Document ingestion CLI (folder → vector DB)
+├── multiagent_chatbot.py      # Legacy terminal chatbot (older, simpler flow)
 ├── main.py                    # Early prototype, superseded — not part of the pipeline
 ├── documents/                 # Drop your PDFs / manuals / guides here
 ├── .env                       # Environment variables (Groq API key)
@@ -16,10 +36,10 @@ Multi-Agent/
 ├── chroma_langchain_db/       # Persisted vector database
 └── Documentation/             # This folder
     ├── README.md             # Overview
-    ├── ARCHITECTURE.md       # System architecture
+    ├── ARCHITECTURE.md       # System architecture and routing logic
     ├── SETUP.md              # Installation & setup guide
     ├── COMPONENTS.md         # Detailed component explanation
-    ├── USAGE.md              # How to use the system
+    ├── USAGE.md              # How to use and customize
     └── IMPLEMENTATION_SUMMARY.md  # Full summary + change log
 ```
 
@@ -31,10 +51,10 @@ Multi-Agent/
    ```
 
 2. **Setup Environment:**
-   - Create `.env` file with your Groq API key
+   - Create `.env` with your Groq API key
    - See `SETUP.md` for details
 
-3. **Add Documents:**
+3. **Add Documents** (optional — the web fallback works without them):
    Copy camera manuals, photography guides, or any reference files into `documents/`.
    Supported: PDF, DOCX, CSV, HTML, TXT, MD, JSON, PY.
 
@@ -43,34 +63,54 @@ Multi-Agent/
    python ingest_documents.py
    ```
 
-5. **Run Chatbot:**
+5. **Run the App:**
    ```bash
-   python multiagent_chatbot.py
+   streamlit run streamlit_app.py
    ```
+   Opens at `http://localhost:8501`.
+
+## The Interface
+
+A vintage, letterpress-styled web page with two sidebar panels and nothing else:
+
+- **Context** — a drag-and-drop box. Files dropped here are used as the context for
+  the current question, ahead of the archive. They are session-scoped and are **not**
+  written into the vector database.
+- **Recent chats** — the conversations from this browser session, titled from their
+  first question, plus a "New conversation" button.
+
+Every answer carries a **badge** naming the source that produced it (attached files /
+archive search / web search), and an **Agent trace** expander showing the retrieved
+passages with their relevance scores, the supervisor's verdict at each rung, and each
+agent's working.
 
 ## Key Features
 
-✅ **Multi-Agent Architecture** - Sequential chain of specialized agents
-✅ **Document Ingestion** - One command loads a whole folder into the vector DB
-✅ **Retrieval-Augmented Generation** - Agents answer from your documents, not just model priors
-✅ **Vector Database** - ChromaDB stores and retrieves document chunks
-✅ **LangGraph** - Orchestrates agent workflow
-✅ **Groq API** - Fast LLM inference
-✅ **Data Persistence** - Chroma DB persists locally
+✅ **Escalation ladder** — attached files → archive → web, never silently skipped
+✅ **Supervisor gate** — an LLM grades every source; unsupported questions are refused, not hallucinated
+✅ **Web search fallback** — DuckDuckGo via `ddgs`; no API key, no account
+✅ **Attach-for-context** — drop files in the sidebar without permanently ingesting them
+✅ **Document Ingestion** — one command loads a whole folder into the vector DB
+✅ **Full transparency** — relevance scores and supervisor verdicts visible per answer
+✅ **Vector Database** — ChromaDB stores and retrieves document chunks
+✅ **LangGraph** — orchestrates the agents, including the escalation loop
+✅ **Groq API** — fast LLM inference
 
 ## Technology Stack
 
-- **LangGraph**: Agent workflow orchestration
+- **Streamlit**: Web UI
+- **LangGraph**: Agent workflow orchestration, including conditional edges and cycles
 - **ChromaDB**: Vector database for knowledge storage
-- **Groq API**: LLM backend
+- **Groq API**: LLM backend (`openai/gpt-oss-120b`)
 - **Sentence Transformers**: Embedding model (all-MiniLM-L6-v2)
+- **ddgs**: DuckDuckGo search for the web fallback
 - **LangChain**: Core LLM abstractions
 - **langchain-community / pypdf / docx2txt**: Document loaders
 
 ## Where to Read Next
 
 - New to the project → `SETUP.md`
-- Want to understand the flow → `ARCHITECTURE.md`
+- Want to understand the routing → `ARCHITECTURE.md`
 - Want line-by-line detail → `COMPONENTS.md`
 - Want to use or customize it → `USAGE.md`
 - Want the full change history → `IMPLEMENTATION_SUMMARY.md`

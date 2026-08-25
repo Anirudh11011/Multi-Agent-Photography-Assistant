@@ -2,41 +2,59 @@
 
 ## Basic Usage
 
-### Starting the Chatbot
+### Starting the App
 
 ```bash
-python multiagent_chatbot.py
+streamlit run streamlit_app.py
 ```
 
-You'll see:
-```
-You:
-```
+Opens at `http://localhost:8501`. Stop it with `Ctrl+C` in the terminal.
 
 ### Asking Questions
 
-```
-You: What are the best camera settings for sunset photography on a Sony camera?
-```
-
-The system will:
-1. Supervisor retrieves the 4 most relevant document chunks
-2. Agent 1 analyzes the scene using those chunks
-3. Agent 2 provides camera settings using the chunks + Agent 1's analysis
-4. Response Generator combines the answer
-5. You get a response
-
-### Exiting
+Type into the chat box at the bottom:
 
 ```
-You: exit
+What are the best camera settings for sunset photography on a Sony camera?
 ```
+
+What happens internally:
+
+1. **gather_context** loads the first rung — your attached files if any, otherwise a
+   similarity search over the archive
+2. **supervisor** grades that material: does it actually answer the question?
+3. If **rejected**, the next rung is tried (archive, then web) and graded again
+4. If **approved**, Agent 1 analyzes the scene, Agent 2 produces settings, and the
+   Response Generator combines them
+5. If every rung is rejected, you get an explicit "I don't have relevant information"
+
+### Reading an Answer
+
+Each answer carries two pieces of provenance:
+
+- **The badge** — `Context · attached files`, `Context · archive search`,
+  `Context · web search`, or `Context · none found`
+- **The Agent trace** expander — every rung tried, the passages it produced with their
+  relevance scores, the supervisor's verdict at each rung, and each agent's output
+
+When a rung is rejected the trace shows why, in the supervisor's own words. This is the
+fastest way to understand any surprising answer.
+
+### The Sidebar
+
+**Context** — drag files in to answer from them. They are tried *before* the archive,
+graded like any other source, and discarded when the session ends. Nothing is written
+to the vector database.
+
+**Recent chats** — conversations from this browser session, newest first, titled from
+their first question. `›` marks the current one. "New conversation" starts a fresh
+thread. Chats do not survive a server restart.
 
 ---
 
 ## Adding Camera Knowledge
 
-### The workflow
+### Permanently (into the archive)
 
 ```bash
 # 1. Drop files into the folder
@@ -45,11 +63,16 @@ cp ~/Downloads/nikon_z6_manual.pdf documents/
 # 2. Re-ingest
 python ingest_documents.py
 
-# 3. Ask about it
-python multiagent_chatbot.py
+# 3. Ask about it in the app
 ```
 
-No code changes needed — the ingester writes into the same collection the chatbot reads.
+No code changes needed — the ingester writes into the same collection the app reads.
+If the app is already running, restart it so the vector store handle is rebuilt.
+
+### Temporarily (for one conversation)
+
+Drop the file into the sidebar **Context** box. Nothing is ingested, nothing persists.
+Use this for a one-off manual you don't want permanently in your corpus.
 
 ### Ingesting from a different folder
 
@@ -59,20 +82,22 @@ python ingest_documents.py ~/Documents/camera-manuals
 
 ### After editing a document
 
-Chunk IDs are content hashes, so an edited file creates *new* chunks while the old
-ones linger and can still be retrieved. Rebuild cleanly:
+Chunk IDs are content hashes, so an edited file creates *new* chunks while the old ones
+linger and can still be retrieved. Rebuild cleanly:
 
 ```bash
 python ingest_documents.py --reset
 ```
 
-Note `--reset` wipes the whole collection, including stored chat history.
+Note `--reset` wipes the whole collection, including any legacy chat entries.
 
 ### Supported formats
 
 `.pdf`, `.docx`, `.doc`, `.csv`, `.html`, `.htm`, `.txt`, `.md`, `.json`, `.py`
 
-To add another format, extend the `LOADERS` dict in `ingest_documents.py`:
+The sidebar accepts exactly the same list — it reuses `load_file` from
+`ingest_documents.py`. To add another format, extend the `LOADERS` dict there and both
+paths gain it at once:
 
 ```python
 LOADERS = {
@@ -80,6 +105,38 @@ LOADERS = {
     ".epub": UnstructuredEPubLoader,   # remember to import it
 }
 ```
+
+---
+
+## Testing the Three Paths
+
+A quick way to confirm everything works. Adjust the questions to your own corpus.
+
+**Should answer from the archive** — ask about something you know is in your documents:
+```
+What aperture should I use for mountain landscapes with the Canon R5?
+```
+Expect: `Context · archive search`, supervisor verdict `YES`.
+
+**Should escalate to the web** — same subject, a detail your documents omit:
+```
+How many megapixels is the Canon R5 sensor?
+```
+Expect: the archive rung rejected in the trace, then `Context · web search`. This is the
+most informative test — it exercises the supervisor *and* the fallback.
+
+**Should refuse instantly** — completely off-topic:
+```
+How do I bake sourdough bread at home?
+```
+Expect: `Context · none found` in well under a second. Nothing scores above the
+relevance floor, so no LLM call is made at all. If this takes ten seconds, your floor is
+too low.
+
+**Should use attachments** — save a file about a camera *not* in your archive, drop it
+in the Context box, and ask about it. Expect `Context · attached files` and no
+supervisor step for the archive. Then remove the file and ask again — it should
+escalate to web or refuse.
 
 ---
 
@@ -100,46 +157,84 @@ vector_store = Chroma(
 
 query = "sunset at beach, sony camera"
 
-# Exactly what the supervisor does
-for doc in vector_store.similarity_search(query, k=4, filter={"type": "ingested_document"}):
-    print(f"- [{doc.metadata['source']}] {doc.page_content[:120]}...")
+# Exactly what the retrieved rung does
+hits = vector_store.similarity_search_with_relevance_scores(
+    query, k=4, filter={"type": "ingested_document"})
+for doc, score in hits:
+    print(f"{score:.3f}  {doc.metadata['source']:30}  {doc.page_content[:70]}")
 ```
 
-### Seeing relevance scores
+**Higher score = closer match** (note this is the inverse of raw distance). Measured
+against a two-document corpus:
+
+```
+ 0.433  sample_notes.txt        The Sony A7 IV is a full-frame mirrorless camera...
+ 0.203  canon_r5_notes.txt      Canon EOS R5 landscape guide...
+-0.264  (off-topic query)       …scores go negative for unrelated text
+```
+
+Scores below `RELEVANCE_FLOOR` (0.25) are dropped before the supervisor ever sees them.
+
+### Seeing what is actually retrievable
+
+The raw collection count is misleading — it includes chat entries written by the legacy
+CLI, which are filtered out of retrieval. Count only real documents:
 
 ```python
-for doc, distance in vector_store.similarity_search_with_score(
-        query, k=4, filter={"type": "ingested_document"}):
-    print(f"{distance:.3f}  {doc.metadata['source']:30}  {doc.page_content[:70]}")
+import chromadb
+col = chromadb.PersistentClient(path="./chroma_langchain_db") \
+              .get_collection("multi_agent_collection")
+r = col.get(where={"type": "ingested_document"}, include=["metadatas", "documents"])
+print(len(r["documents"]), "retrievable chunks")
+for m, d in zip(r["metadatas"], r["documents"]):
+    print(f"[{m['source']}] {d[:80]}")
 ```
-
-Lower distance = closer match. Example output from a 5-document test corpus:
-
-```
-0.619  beach_sunset_guide.txt          Photographing Sunsets at the Beach...
-0.993  sony_a7iv_manual.txt            Sony Alpha A7 IV Instruction Manual...
-1.150  forest_guide.txt                Photographing Forests and Woodland...
-1.301  bird_guide.txt                  Wildlife and Bird Photography Settings...
-```
-
-Note that ranks 3 and 4 are irrelevant but still get passed to the agents — `k=4`
-always returns 4 chunks, with no relevance cutoff.
 
 ---
 
-## Tuning Retrieval
+## Tuning the Gates
+
+The two gates catch different failures. Tune them separately.
+
+### The relevance floor (cheap gate)
+
+`streamlit_app.py`, line 51:
+
+```python
+RELEVANCE_FLOOR = 0.25
+```
+
+- **Too high** → good chunks are discarded and everything escalates to the web
+- **Too low** → junk reaches the supervisor, costing an LLM call to reject it
+
+This value is **corpus-specific and embedding-specific**. Re-calibrate by running a few
+known-good and known-bad queries through the snippet above and picking a number that
+separates them. Do this again after a large ingest or an embedding-model change.
+
+### The supervisor prompt (smart gate)
+
+`streamlit_app.py`, lines ~155–163. The key sentence controls strictness:
+
+```python
+"Partial but genuinely on-topic material counts as sufficient; material that is "
+"merely on a related subject does not."
+```
+
+- **Too strict** → useful partial answers get rejected and escalate unnecessarily
+- **Too lenient** → the agents answer from material that doesn't really cover the
+  question, which is the failure the gate exists to prevent
+
+If you loosen this, watch the "battery life" style of question — on-topic document,
+missing detail — since that is exactly what a lenient grader lets through.
 
 ### Retrieve more or fewer chunks
 
-`multiagent_chatbot.py`, in `supervisor_agent()`:
-
 ```python
-docs = vector_store.similarity_search(state["user_input"], k=8,   # was 4
-                                      filter={"type": "ingested_document"})
+TOP_K = 4        # line 50
 ```
 
-Raise `k` when questions span two topics (a scene *and* a camera model) and one
-half is getting crowded out. Costs prompt tokens.
+Raise it when questions span two topics (a scene *and* a camera model) and one half is
+getting crowded out. Costs prompt tokens.
 
 ### Change chunk size
 
@@ -150,18 +245,8 @@ CHUNK_SIZE = 500      # smaller = more precise matches, less surrounding context
 CHUNK_OVERLAP = 100
 ```
 
-Requires a full re-ingest with `--reset` to take effect.
-
-### Add a relevance cutoff
-
-```python
-results = vector_store.similarity_search_with_score(
-    state["user_input"], k=6, filter={"type": "ingested_document"})
-docs = [d for d, dist in results if dist < 1.2]
-state["context"] = "\n\n".join(d.page_content for d in docs)
-```
-
-Drops weak matches instead of padding the prompt with them.
+Requires a full re-ingest with `--reset` to take effect. The app imports these constants,
+so attachment chunking follows automatically.
 
 ### Tag documents by category for filtered retrieval
 
@@ -171,24 +256,57 @@ At ingest time, in `ingest_documents.py`:
 doc.metadata["category"] = "manual" if "manual" in path.lower() else "guide"
 ```
 
-Then retrieve both halves of a mixed question separately:
+Then retrieve both halves of a mixed question separately, in `gather_context`:
 
 ```python
-scene = vector_store.similarity_search(q, k=3, filter={"category": "guide"})
-model = vector_store.similarity_search(q, k=3, filter={"category": "manual"})
-state["context"] = "\n\n".join(d.page_content for d in scene + model)
+scene = store.similarity_search(q, k=3, filter={"category": "guide"})
+model = store.similarity_search(q, k=3, filter={"category": "manual"})
 ```
 
-This guarantees both the scene guidance and the camera manual are represented,
-which a single unfiltered `k=4` search does not.
+This guarantees both the scene guidance and the camera manual are represented, which a
+single unfiltered `k=4` search does not.
+
+---
+
+## Tuning the Web Fallback
+
+### More or fewer results
+
+```python
+WEB_RESULTS = 5        # line 55
+```
+
+### Disabling the web rung entirely
+
+In the main column, drop `"web"` from the ladder:
+
+```python
+stages = (["attached"] if attached_context else []) + ["retrieved"]
+```
+
+Questions your documents can't answer will then refuse instead of searching — the
+behaviour before the fallback was added.
+
+### Always searching the web alongside your documents
+
+The ladder is deliberately ordered so your own documents win when they are sufficient.
+If you want the web consulted every time, put it first (`["web", "retrieved"]`) or merge
+both into one context in `gather_context`. Be aware that merging removes the clean
+provenance the badge and source note currently give you.
+
+### Swapping the search engine
+
+Replace the body of `web_search()` (line 76). Anything returning title/URL/snippet text
+works — the supervisor grades whatever comes back. Keep the `__SEARCH_FAILED__` sentinel
+on error so a failure degrades to a refusal instead of crashing.
 
 ---
 
 ## Modifying Agent Behavior
 
-### Changing Agent 1 Behavior
+### Changing Agent 1
 
-Edit `multiagent_chatbot.py`, function `agent_1()`:
+Edit `streamlit_app.py`, function `agent_1()` (line 181):
 
 ```python
 def agent_1(state: AgentState) -> AgentState:
@@ -197,21 +315,25 @@ def agent_1(state: AgentState) -> AgentState:
         f"Reference documents:\n{state['context']}\n\n"
         f"Analyze: {state['user_input']}"
     )
-    response = llm.invoke([HumanMessage(content=prompt)])
-    state["analysis_1"] = response.content
-    # ... rest of code
+    state["analysis_1"] = llm.invoke([HumanMessage(content=prompt)]).content
+    return state
 ```
 
-Keep the `{state['context']}` interpolation, or the agent loses access to your documents.
+Keep the `{state['context']}` interpolation, or the agent loses access to the material
+the supervisor just approved.
+
+> The same prompts also exist in `multiagent_chatbot.py`. Editing one does **not**
+> change the other.
 
 ### Grounding the agents more strictly
 
-To stop the model answering from its own priors:
+The supervisor already blocks unsupported questions, so the agents rarely see irrelevant
+material. To also stop them padding from model priors:
 
 ```python
 prompt = (
     f"Answer ONLY from the reference documents below. "
-    f"If they do not cover it, say so explicitly.\n\n"
+    f"If they do not cover part of the question, say so explicitly.\n\n"
     f"Reference documents:\n{state['context']}\n\n"
     f"Question: {state['user_input']}"
 )
@@ -219,91 +341,125 @@ prompt = (
 
 ### Giving the Response Generator the original question
 
-Currently it sees only the two analyses. To close that gap, edit `response_generator()`:
+It currently sees only the two analyses plus the source note. To close that gap, edit
+`response_generator()` (line 202):
 
 ```python
-prompt = f"""The user asked: {state["user_input"]}
-
-Based on these analyses, generate a response:
-
-Analysis 1: {state["analysis_1"]}
-Analysis 2: {state["analysis_2"]}
-
-Provide a final answer."""
+prompt = (
+    f"The user asked: {state['user_input']}\n\n"
+    "Based on these analyses, generate a response:\n\n"
+    f"Analysis 1: {state['analysis_1']}\n\n"
+    f"Analysis 2: {state['analysis_2']}\n\n"
+    f"{note}\n\nProvide a final answer."
+)
 ```
 
-### Showing sources in the answer
+### Showing document sources in the answer
 
-In `supervisor_agent()`, keep the source names:
+Retrieved chunks are currently prefixed with their relevance score. To carry filenames
+through as well, in `gather_context`:
 
 ```python
 state["context"] = "\n\n".join(
-    f"[{d.metadata.get('source','?')}]\n{d.page_content}" for d in docs
+    f"[{d.metadata.get('source','?')} · relevance {s:.2f}]\n{d.page_content}"
+    for d, s in kept
 )
 ```
 
-Then the agents can cite which manual a setting came from.
+Then the agents can cite which manual a setting came from. Attached files and web
+results already carry `[filename]` and `[web]` labels.
 
 ---
 
-## Changing LLM Model
+## Changing the LLM Model
 
-Edit `multiagent_chatbot.py`:
+`streamlit_app.py`, line 48:
 
 ```python
-llm = ChatGroq(
-    model="openai/gpt-oss-120b",  # change this
-    api_key=groq_api_key
-)
+MODEL_NAME = "openai/gpt-oss-120b"
+TEMPERATURE = 0.7
 ```
 
-Check https://console.groq.com/docs/models for the current model list — available
-model IDs change over time.
+Check https://console.groq.com/docs/models for the current list — available model IDs
+change over time. The supervisor uses the same model as the agents; if you want a
+cheaper grader, build a second `ChatGroq` instance inside `get_graph()` and use it in
+`supervisor()` only.
+
+---
+
+## Customizing the Look
+
+All styling lives in `vintage_theme.py`. `streamlit_app.py` emits no HTML.
+
+| To change | Edit |
+|---|---|
+| Colors | The palette constants at the top (lines 10–16) |
+| Fonts, spacing, borders | The `_CSS` block (line 35) |
+| Title and subtitle | `masthead()` (line 200) |
+| Step names in the trace | `STEP_LABELS` (line 24) |
+| Chat avatars | `USER_AVATAR` / `BOT_AVATAR` (lines 21–22) |
+| Widget chrome before CSS loads | `.streamlit/config.toml` |
+
+The palette is defined once as Python constants and interpolated into the CSS, so
+changing `SEPIA` updates every element that uses it.
 
 ---
 
 ## Debugging
 
-### View What's in the Vector DB
+### Read the Agent trace first
+
+Almost every "why did it answer that?" question is answered by the trace: which rungs
+were tried, what each returned, and the supervisor's verdict on each. Start there before
+adding print statements.
+
+### Run the pipeline headlessly
+
+Streamlit's test harness runs the whole app without a browser — useful for scripted
+checks:
 
 ```python
-# Save as debug_db.py
-from collections import Counter
-from langchain_chroma import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
+from streamlit.testing.v1 import AppTest
 
-embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-vector_store = Chroma(
-    collection_name="multi_agent_collection",
-    embedding_function=embeddings,
-    persist_directory="./chroma_langchain_db",
-)
+at = AppTest.from_file("streamlit_app.py", default_timeout=600)
+at.run()
+at.chat_input[0].set_value("What are the landscape settings for the Sony A7 IV?").run()
 
-all_docs = vector_store.get()
-print(f"Total entries: {len(all_docs['ids'])}")
-print(Counter(m.get("type", "?") for m in all_docs["metadatas"]))
-print(Counter(m.get("source", "-") for m in all_docs["metadatas"]
-              if m.get("type") == "ingested_document"))
+turn = at.session_state.chats[at.session_state.current]["history"][0]
+print("source:", turn["source"])
+print("path:", " → ".join(n for n, _ in turn["steps"]))
+print("answer:", turn["answer"][:200])
 ```
 
-Run:
-```bash
-python debug_db.py
-```
+`turn["steps"]` is the same data the trace expander renders, so you can assert on the
+routing directly.
 
-This tells you how many chunks came from each source file — the fastest way to
-confirm a particular manual actually made it in.
-
-### Print the retrieved context each turn
-
-Add to `supervisor_agent()`:
+### Inspect the graph without the UI
 
 ```python
-print(f"\n[retrieved {len(docs)} chunks: "
-      f"{[d.metadata.get('source') for d in docs]}]\n")
+import importlib.util
+spec = importlib.util.spec_from_file_location("app", "streamlit_app.py")
+app = importlib.util.module_from_spec(spec)
+try:
+    spec.loader.exec_module(app)
+except Exception:
+    pass   # Streamlit calls fail outside `streamlit run`; the functions still load
+
+out = app.get_graph().invoke({
+    "user_input": "astro settings for the X-T5", "attached_context": "",
+    "context": "", "source": "", "stages": ["retrieved", "web"], "stage": 0,
+    "approved": False, "verdict": "", "attempts": [],
+    "analysis_1": "", "analysis_2": "", "final_response": "",
+})
+print(out["source"])
+for src, verdict in out["attempts"]:
+    print(f"{src}: {verdict}")
 ```
 
-### Enable Verbose Logging
+`attempts` gives the full ladder history in one place. You can also pass a custom
+`stages` list to test a single rung in isolation.
+
+### Enable verbose logging
 
 ```python
 import logging
@@ -314,60 +470,97 @@ logging.basicConfig(level=logging.DEBUG)
 
 ## Examples
 
-### Example 1: Beach Sunset
+### Example 1: Answered from your documents
 
 ```
-You: I have to take a photo of sunset at beach, give camera settings for sony camera
+What aperture should I use for mountain landscapes with the Canon R5?
 ```
 
-What happens internally:
-- Supervisor retrieves the beach sunset guide (closest match) and the Sony manual
-  section (second closest), plus two weaker matches
-- Agent 1 analyzes: high dynamic range, sky 8-10 stops brighter than foreground
-- Agent 2 combines the scene analysis with the Sony-specific menu paths
-- Response Generator produces the final settings list
+- `gather_context` retrieves the Canon R5 note (relevance 0.43)
+- `supervisor`: *YES — the passage gives specific landscape settings*
+- Agent 1 analyzes the scene; Agent 2 produces the settings; the Editor combines them
+- Badge: **Context · archive search**, ~11 s
 
-### Example 2: Adding a New Camera
+### Example 2: Escalated to the web
 
-```bash
-cp ~/Downloads/nikon_z8_manual.pdf documents/
-python ingest_documents.py
-python multiagent_chatbot.py
 ```
+How many megapixels is the Canon R5 sensor?
 ```
-You: settings for astrophotography on a nikon z8
+
+- `gather_context` finds nothing above the floor
+- `supervisor`: rejected without an LLM call → next rung
+- `gather_context` searches DuckDuckGo; `supervisor`: *YES*
+- Answer states it came from a web search and cites URLs
+- Badge: **Context · web search**, ~45 s
+
+### Example 3: Attachment rejected, escalated
+
+A file about the Fujifilm X-T5 is attached, but the question is about a Nikon:
+
 ```
+What is the battery life of the Nikon Z9?
+```
+
+- `attached` rung: *NO — the passage discusses the Fujifilm X-T5 and contains no
+  information about the Nikon Z9's battery life*
+- `retrieved` rung: nothing above the floor
+- `web` rung: approved → answered
+
+The attachment being present did not force an answer out of the wrong document.
+
+### Example 4: Honest refusal
+
+```
+How do I bake sourdough bread at home?
+```
+
+Nothing above the floor, nothing from the web → "I don't have relevant information to
+answer that — not in the attached files, not in the archive, and not from a web search."
 
 ---
 
 ## Performance Tips
 
-1. **Vector DB Size**: More data = slower searches, and more competition for the
-   `k` retrieval slots. Keep only relevant documents.
-2. **Chat history accumulates**: every query and both agent outputs are written to
-   the collection on every turn. They're filtered out of retrieval, but the DB grows.
-   Periodic `--reset` + re-ingest keeps it lean.
-3. **Embedding Model**: larger models are more accurate but slower
-4. **Ingestion is CPU-bound** on embedding — a large PDF corpus takes a few minutes
-5. **Three LLM calls per query**: response time is dominated by these
+1. **The first question is slow** — the embedding model loads on demand, then is cached
+   for the life of the server.
+2. **Escalation costs time.** An archive hit is ~11 s; a full escalation to the web is
+   ~45 s, because each rung adds a supervisor call and the winning rung still runs the
+   full three-agent chain.
+3. **Off-topic questions are free.** The relevance floor rejects them with no LLM call.
+4. **Attachments are parsed once** — `@st.cache_data` keys on file content, so follow-up
+   questions against the same files skip parsing.
+5. **Large attachments are ranked, not truncated** — only the 12 most relevant chunks,
+   within 12000 characters, reach the model.
+6. **The database no longer grows per turn.** The app writes nothing back to ChromaDB;
+   only `ingest_documents.py` adds to it.
+7. **Keep the corpus relevant.** More documents means more competition for the `k`
+   retrieval slots.
 
 ---
 
 ## Troubleshooting
 
-### Agents giving generic responses
-- Confirm documents are actually ingested (`debug_db.py` above)
-- Raise `k` in `supervisor_agent()`
-- Use a stricter grounding prompt (see "Grounding the agents more strictly")
-- Check the retrieved chunks are on-topic by printing them
+### Everything escalates to the web
+Your archive is probably smaller than you think, or the relevance floor is too high.
+Count retrievable chunks (see "Seeing what is actually retrievable") and check the
+scores in the trace.
 
-### Bot cites outdated information
+### The supervisor rejects things it shouldn't
+Loosen the wording in the supervisor prompt, or lower `RELEVANCE_FLOOR` if good chunks
+are being dropped before it ever sees them. The trace tells you which of the two is
+happening.
+
+### Answers cite outdated information
 Old chunks from an edited document are still in the DB. Run
 `python ingest_documents.py --reset`.
 
 ### Slow responses
+- Check whether the trace shows a full escalation (three rungs = six LLM calls)
 - Check Groq API rate limits
 - Try a smaller/faster model
+
+### Recent chats disappeared
+They live in the browser session only. A server restart or a fresh session clears them.
 
 ### Vector DB errors
 ```bash
@@ -380,7 +573,8 @@ python ingest_documents.py
 ## Next Steps
 
 1. Fill `documents/` with your real manuals and guides
-2. Tune `k` and chunk size for your corpus
-3. Modify agent prompts for your use case
-4. Add category metadata for filtered retrieval
-5. Add more agents for different specialties
+2. Re-calibrate `RELEVANCE_FLOOR` against that larger corpus
+3. Tune the supervisor prompt for how strict you want the gate
+4. Modify agent prompts for your use case
+5. Add category metadata for filtered retrieval
+6. Consider persisting recent chats to disk if you want them across restarts
