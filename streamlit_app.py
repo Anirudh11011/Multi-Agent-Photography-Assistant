@@ -53,8 +53,9 @@ MAX_CONTEXT_CHARS = 12000   # budget for attached-file context
 MAX_ATTACHED_CHUNKS = 12
 RECENT_CHAT_LIMIT = 12
 WEB_RESULTS = 5             # DuckDuckGo hits pulled on the final fallback
-REFUSAL = ("I don't have relevant information to answer that — not in the attached "
-           "files, not in the archive, and not from a web search.")
+REFUSAL = ("I couldn't find a reliable source for this in your attached manual, the "
+           "built-in guides, or a web search. Rather than guess at settings you'd act "
+           "on, I'll say so. Try attaching your camera's manual.")
 
 
 # ── Pipeline ─────────────────────────────────────────────────
@@ -87,7 +88,7 @@ def web_search(query: str) -> str:
     return "\n\n".join(blocks)
 
 
-@st.cache_resource(show_spinner="Loading the embedding model…")
+@st.cache_resource(show_spinner="Loading the embedding model")
 def get_embeddings():
     return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
@@ -208,10 +209,28 @@ def get_graph():
                     "line at the end, and cite the source URLs you relied on."),
         }.get(state["source"], "")
         prompt = (
-            "Based on these analyses, generate a response:\n\n"
-            f"Analysis 1: {state['analysis_1']}\n\n"
-            f"Analysis 2: {state['analysis_2']}\n\n"
-            f"{note}\n\nProvide a final answer."
+            "You are writing for a photographer standing in front of the scene, who "
+            "may only have a few seconds to read. Lead with the numbers; explain "
+            "after.\n\n"
+            "Format the answer in exactly this order:\n\n"
+            "1. A markdown table titled '**Start here**' with two columns, Setting "
+            "and Value, and one row each for: Mode, Aperture, Shutter, ISO, White "
+            "balance, Focus, Metering, Drive. Give a single concrete value per row "
+            "(a narrow range only where the light genuinely varies). No prose in the "
+            "table.\n"
+            "2. '**Then adjust**' — at most four one-line bullets, each naming the "
+            "condition and the change to make, e.g. 'Darker than expected: raise ISO "
+            "to 800.'\n"
+            "3. '**Why these settings**' — a short paragraph, no more than four "
+            "sentences, on the reasoning for this scene.\n"
+            "4. '**On your camera**' — only if the reference material describes where "
+            "these controls live on this specific body; two or three bullets. Omit "
+            "the section entirely otherwise.\n\n"
+            "Never put a caveat or a preamble before the table. Do not repeat a value "
+            "in prose that already appears in the table.\n\n"
+            f"Scene analysis: {state['analysis_1']}\n\n"
+            f"Settings analysis: {state['analysis_2']}\n\n"
+            f"{note}\n\nWrite the final answer now."
         )
         state["final_response"] = llm.invoke([HumanMessage(content=prompt)]).content
         return state
@@ -319,22 +338,22 @@ if "chats" not in st.session_state:
 
 # ── Sidebar: context files + recent chats ────────────────────
 with st.sidebar:
-    st.markdown("### Context")
-    st.caption("Drop files here to answer from them directly.")
+    st.markdown("### Camera manual")
+    st.caption("Used for this session only. Never stored.")
     attachments = st.file_uploader(
-        "Drag and drop files",
+        "Attach your camera manual",
         type=["pdf", "docx", "doc", "csv", "html", "htm", "txt", "md", "json", "py"],
         accept_multiple_files=True,
         label_visibility="collapsed",
     )
     if attachments:
-        st.caption(f"{len(attachments)} file(s) attached — tried first, before the archive.")
+        st.caption(f"{len(attachments)} attached. Answered from these first.")
     else:
-        st.caption("No files attached — the archive is tried first.")
+        st.caption("Using built-in guides and the web.")
 
     st.divider()
-    st.markdown("### Recent chats")
-    if st.button("＋ New conversation", use_container_width=True):
+    st.markdown("### Conversations")
+    if st.button("New conversation", use_container_width=True):
         new_chat()
         st.rerun()
 
@@ -358,15 +377,20 @@ if not os.getenv("GROQ_API_KEY"):
 chat = current_chat()
 
 if not chat["history"]:
-    ui.caption("Ask a question. Attached files are tried first, then the archive, "
-               "then a web search — each one reviewed by the supervisor before any "
-               "answer is written.")
+    ui.example_card()
 
 SOURCE_BADGE = {
-    "attached": "Context · attached files",
-    "retrieved": "Context · archive search",
-    "web": "Context · web search",
-    "none": "Context · none found",
+    "attached": "Your attached manual",
+    "retrieved": "Built-in guides",
+    "web": "Web search",
+    "none": "No reliable source",
+}
+
+SOURCE_STEP = {
+    "attached": "your attached manual",
+    "retrieved": "the built-in guides",
+    "web": "a web search",
+    "none": "the remaining sources",
 }
 
 for turn in chat["history"]:
@@ -379,14 +403,14 @@ for turn in chat["history"]:
         st.markdown(turn["answer"])
         ui.caption(f"Answered in {turn['elapsed']:.1f}s")
 
-prompt = st.chat_input("Ask a question…")
+prompt = st.chat_input("Describe your scene and camera")
 if prompt:
     with st.chat_message("user", avatar=ui.USER_AVATAR):
         st.markdown(prompt)
 
     with st.chat_message("assistant", avatar=ui.BOT_AVATAR):
         started = time.time()
-        with st.spinner("Reading the attached files…"):
+        with st.spinner("Reading your manual"):
             attached_context = build_attached_context(attachments, prompt) if attachments else ""
 
         # The ladder: attached files first (when present), then archive, then web.
@@ -399,19 +423,19 @@ if prompt:
         steps, answer, source = [], "", ""
         badge_box = st.container()
         trace_box = st.container()
-        with st.status("Working…", expanded=False) as status:
+        with st.status("Finding a reliable source", expanded=False) as status:
             for update in get_graph().stream(state, stream_mode="updates"):
                 for node, payload in update.items():
                     if node == "gather_context":
                         source = payload.get("source", "")
-                        status.update(label=f"Trying {SOURCE_BADGE.get(source, source)}…")
+                        status.update(label=f"Looking in {SOURCE_STEP.get(source, source)}")
                         body = (f"**Source:** {SOURCE_BADGE.get(source, source)}\n\n"
                                 + (payload.get("context") or "_No material found._"))
                     elif node == "supervisor":
                         ok = payload.get("approved")
                         status.update(
-                            label=f"Supervisor on {source}: "
-                                  + ("approved" if ok else "rejected, escalating…")
+                            label=f"Checking {SOURCE_STEP.get(source, source)}: "
+                                  + ("usable" if ok else "not enough, trying the next source")
                         )
                         body = (f"**Verdict:** {payload.get('verdict', '')}\n\n"
                                 f"**Approved:** {ok}")
