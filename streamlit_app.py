@@ -38,9 +38,18 @@ from langgraph.graph import StateGraph, START, END
 from ingest_documents import (
     load_file, COLLECTION, PERSIST_DIR, CHUNK_SIZE, CHUNK_OVERLAP,
 )
+import conversation_store as store
+import observability as obs
 import vintage_theme as ui
 
 load_dotenv()
+
+# Tracing has to be configured before the first chain is constructed, and the
+# transcript store before the first turn is answered.
+obs.configure_langsmith()
+ENVIRONMENT = obs.environment()
+store.get_engine()
+
 ui.configure_page()
 ui.inject_css()
 
@@ -183,6 +192,7 @@ def get_graph():
         prompt = (
             "You are a helpful Cameramen assistant. When asked to analyze something, "
             "analyze scenic nature so that another agent could write a proper camera "
+            "settings for it. Do not give the settings yourself, just analyze the scene and give the details of that scene like lighting, time of day, weather, and any other relevant information that would help another agent to write the proper camera settings for it."
             f"settings for it.\n\nReference documents:\n{state['context']}\n\n"
             f"Analyze this: {state['user_input']}"
         )
@@ -191,8 +201,8 @@ def get_graph():
 
     def agent_2(state: AgentState) -> AgentState:
         prompt = (
-            "You are a helpful assistant. Provide detailed camera settings of that "
-            "camera model using the information you got from agent 1.\n\n"
+            "You are a helpful assistant. Analyze the scenic information you got from agent 1 and provide detailed camera settings for that "
+            "camera brand/model.\n\n"
             f"Reference documents:\n{state['context']}\n\n"
             f"Agent 1 analysis:\n{state['analysis_1']}\n\n"
             f"Give the settings for: {state['user_input']}"
@@ -321,7 +331,16 @@ def new_chat() -> str:
     st.session_state.chats[cid] = {"title": "New conversation", "history": [],
                                    "created": time.time()}
     st.session_state.current = cid
+    store.ensure_conversation(cid, title="New conversation", app="streamlit",
+                              environment=ENVIRONMENT, user_id=session_user_id())
     return cid
+
+
+def session_user_id() -> str:
+    """A stable anonymous id per browser session, to group one user's chats."""
+    if "user_id" not in st.session_state:
+        st.session_state.user_id = f"anon-{uuid.uuid4().hex[:12]}"
+    return st.session_state.user_id
 
 
 def current_chat() -> dict:
@@ -366,6 +385,18 @@ with st.sidebar:
             st.session_state.current = cid
             st.rerun()
 
+    st.divider()
+    st.markdown("### Recording")
+    counts = store.stats()
+    st.caption(f"{counts['turns']} turns across {counts['conversations']} "
+               f"conversations · env `{ENVIRONMENT}`")
+    st.caption(store.storage_notice())
+    if not store.is_durable() and ENVIRONMENT != "local":
+        st.warning("Transcripts are on ephemeral storage. Set DATABASE_URL to keep them.",
+                   icon="⚠️")
+    st.caption("LangSmith tracing: "
+               + (f"on → project `{obs.project_name()}`" if obs.is_enabled() else "off"))
+
 
 # ── Main ─────────────────────────────────────────────────────
 ui.masthead()
@@ -393,7 +424,28 @@ SOURCE_STEP = {
     "none": "the remaining sources",
 }
 
-for turn in chat["history"]:
+
+def feedback_controls(turn: dict, index: int) -> None:
+    """Thumbs up/down — stored with the transcript and sent to LangSmith."""
+    message_id = turn.get("message_id")
+    if not message_id:
+        return
+    key = f"rated-{message_id}"
+    if st.session_state.get(key):
+        ui.caption(f"Thanks — logged as {st.session_state[key]}.")
+        return
+    up, down, _ = st.columns([1, 1, 8])
+    for col, label, rating, score in ((up, "Helpful", "up", 1.0),
+                                      (down, "Not helpful", "down", 0.0)):
+        if col.button(label, key=f"fb-{rating}-{message_id}-{index}", type="tertiary"):
+            store.record_feedback(message_id, rating)
+            if turn.get("run_id"):
+                obs.record_feedback(turn["run_id"], "user_rating", score)
+            st.session_state[key] = rating
+            st.rerun()
+
+
+for index, turn in enumerate(chat["history"]):
     with st.chat_message("user", avatar=ui.USER_AVATAR):
         st.markdown(turn["question"])
     with st.chat_message("assistant", avatar=ui.BOT_AVATAR):
@@ -401,7 +453,11 @@ for turn in chat["history"]:
         if turn.get("steps"):
             ui.render_trace(turn["steps"])
         st.markdown(turn["answer"])
-        ui.caption(f"Answered in {turn['elapsed']:.1f}s")
+        # caption() renders raw HTML, so the trace link has to be an anchor tag.
+        trace_link = (f' · <a href="{turn["run_url"]}" target="_blank">view trace</a>'
+                      if turn.get("run_url") else "")
+        ui.caption(f"Answered in {turn['elapsed']:.1f}s{trace_link}")
+        feedback_controls(turn, index)
 
 prompt = st.chat_input("Describe your scene and camera")
 if prompt:
@@ -423,8 +479,17 @@ if prompt:
         steps, answer, source = [], "", ""
         badge_box = st.container()
         trace_box = st.container()
-        with st.status("Finding a reliable source", expanded=False) as status:
-            for update in get_graph().stream(state, stream_mode="updates"):
+        turn_index = len(chat["history"])
+        config = obs.run_config(
+            conversation_id=st.session_state.current,
+            turn_index=turn_index,
+            user_id=session_user_id(),
+            extra_metadata={"model": MODEL_NAME, "attached_files": len(attachments or []),
+                            "stages": stages},
+        )
+        with st.status("Finding a reliable source", expanded=False) as status, \
+                obs.traced_run() as run:
+            for update in get_graph().stream(state, stream_mode="updates", config=config):
                 for node, payload in update.items():
                     if node == "gather_context":
                         source = payload.get("source", "")
@@ -458,8 +523,30 @@ if prompt:
         st.markdown(answer)
         ui.caption(f"Answered in {elapsed:.1f}s")
 
-    chat["history"].append({"question": prompt, "answer": answer, "steps": steps,
-                            "source": source, "elapsed": elapsed})
     if chat["title"] == "New conversation":
         chat["title"] = prompt[:40]
+
+    # Recorded on every turn, in every environment — this is the training corpus.
+    message_id = store.record_turn(
+        st.session_state.current,
+        turn_index=turn_index,
+        question=prompt,
+        answer=answer,
+        source=source,
+        model=MODEL_NAME,
+        elapsed_seconds=elapsed,
+        steps=steps,
+        environment=ENVIRONMENT,
+        title=chat["title"],
+        app="streamlit",
+        user_id=session_user_id(),
+        meta={"attached_files": [f.name for f in (attachments or [])],
+              "stages": stages, "temperature": TEMPERATURE},
+        **run.as_dict(),
+    )
+
+    chat["history"].append({"question": prompt, "answer": answer, "steps": steps,
+                            "source": source, "elapsed": elapsed,
+                            "message_id": message_id, "run_id": run.run_id,
+                            "run_url": run.run_url})
     st.rerun()

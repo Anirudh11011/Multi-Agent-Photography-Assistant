@@ -1,6 +1,6 @@
 # ShutterAide
 
-**Track B: Bring Your Own Domain.** Live app: _<paste Streamlit link>_ · Code: `streamlit_app.py`
+**Track B: Bring Your Own Domain.** Live app: _<https://multi-agent-photography-assistant-gpegihzwybyrkdw233xcmn.streamlit.app/>_ · Code: `streamlit_app.py`
 
 ## The problem
 

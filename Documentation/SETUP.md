@@ -63,7 +63,35 @@ GROQ_API_KEY=your_groq_api_key_here
 4. Copy and paste it into `.env`
 
 The app checks for this at startup and stops with a clear message if it is missing.
-`.env` is listed in `.gitignore` and is not committed.
+`.env` is listed in `.gitignore` and is not committed. Copy `.env.example` for the full
+list of settings.
+
+### Optional: LangSmith tracing
+
+Add a key from https://smith.langchain.com → Settings → API Keys:
+
+```
+LANGSMITH_API_KEY=your_langsmith_key_here
+LANGSMITH_PROJECT=multi-agent-photography-assistant
+```
+
+Every agent node, LLM call and retrieval is then traced, grouped one thread per
+conversation. Leave the key blank and tracing simply stays off. See
+`OBSERVABILITY.md`.
+
+### Conversation recording
+
+Every turn is written to a database automatically — no configuration needed locally,
+where it lands in `./conversations.db`. **A deployment needs `DATABASE_URL`** pointing
+at a managed database, or the transcripts are lost on each restart:
+
+```
+DATABASE_URL=postgresql://user:password@host:5432/dbname
+APP_ENV=deploy
+```
+
+with `pip install "psycopg[binary]"`. See `OBSERVABILITY.md` for the schema, the
+Streamlit Cloud secrets block, and the export tool.
 
 ## Step 3: Add Your Documents (optional)
 
@@ -246,11 +274,16 @@ Multi-Agent-Photography-Assistant/
 ├── .streamlit/
 │   └── config.toml
 ├── ingest_documents.py
+├── observability.py          # LangSmith tracing
+├── conversation_store.py     # transcript database
+├── export_conversations.py   # export transcripts for training
 ├── multiagent_chatbot.py     # legacy CLI
 ├── main.py                   # early prototype, unused
 ├── documents/                # ← your source files here
 │   └── sony_a7iv_manual.pdf
-├── .env                      # ← your Groq API key here
+├── .env                      # ← your API keys here
+├── .env.example
+├── conversations.db          # ← created on the first answer (SQLite fallback)
 ├── .gitignore
 ├── requirements.txt
 ├── chroma_langchain_db/      # ← created/populated by ingest_documents.py

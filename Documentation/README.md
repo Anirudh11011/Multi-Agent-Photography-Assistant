@@ -28,18 +28,23 @@ Multi-Agent-Photography-Assistant/
 ├── vintage_theme.py           # All styling: palette, CSS, layout helpers
 ├── .streamlit/config.toml     # Streamlit's own theme settings
 ├── ingest_documents.py        # Document ingestion CLI (folder → vector DB)
+├── observability.py           # LangSmith tracing setup and run metadata
+├── conversation_store.py      # Durable transcript database (SQLite / Postgres)
+├── export_conversations.py    # Export recorded turns for training or evaluation
 ├── multiagent_chatbot.py      # Legacy terminal chatbot (older, simpler flow)
 ├── main.py                    # Early prototype, superseded — not part of the pipeline
 ├── documents/                 # Drop your PDFs / manuals / guides here
-├── .env                       # Environment variables (Groq API key)
+├── .env                       # Environment variables (API keys, DATABASE_URL)
 ├── requirements.txt           # Python dependencies
 ├── chroma_langchain_db/       # Persisted vector database
+├── conversations.db           # Recorded transcripts (SQLite fallback)
 └── Documentation/             # This folder
     ├── README.md             # Overview
     ├── ARCHITECTURE.md       # System architecture and routing logic
     ├── SETUP.md              # Installation & setup guide
     ├── COMPONENTS.md         # Detailed component explanation
     ├── USAGE.md              # How to use and customize
+    ├── OBSERVABILITY.md      # LangSmith tracing + conversation recording
     └── IMPLEMENTATION_SUMMARY.md  # Full summary + change log
 ```
 
@@ -95,6 +100,8 @@ agent's working.
 ✅ **Vector Database** — ChromaDB stores and retrieves document chunks
 ✅ **LangGraph** — orchestrates the agents, including the escalation loop
 ✅ **Groq API** — fast LLM inference
+✅ **LangSmith tracing** — every node, prompt and LLM call, grouped one thread per conversation
+✅ **Conversation recording** — every turn stored in SQL, local and deployed, exportable for training
 
 ## Technology Stack
 
@@ -105,6 +112,8 @@ agent's working.
 - **Sentence Transformers**: Embedding model (all-MiniLM-L6-v2)
 - **ddgs**: DuckDuckGo search for the web fallback
 - **LangChain**: Core LLM abstractions
+- **LangSmith**: Tracing and evaluation
+- **SQLAlchemy**: Conversation store — SQLite locally, Postgres in deploy mode
 - **langchain-community / pypdf / docx2txt**: Document loaders
 
 ## Where to Read Next
@@ -113,4 +122,5 @@ agent's working.
 - Want to understand the routing → `ARCHITECTURE.md`
 - Want line-by-line detail → `COMPONENTS.md`
 - Want to use or customize it → `USAGE.md`
+- Want traces, stored conversations, or training exports → `OBSERVABILITY.md`
 - Want the full change history → `IMPLEMENTATION_SUMMARY.md`

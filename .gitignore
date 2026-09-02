@@ -5,3 +5,5 @@ __pycache__/
 chroma_langchain_db/
 .streamlit/secrets.toml
 .DS_Store
+conversations.db
+*.jsonl
