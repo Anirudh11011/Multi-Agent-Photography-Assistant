@@ -6,11 +6,11 @@ Run with:
 Flow — an escalation ladder. Every source is graded by the supervisor before it
 is used, and a failed grade falls through to the next source:
 
-    attached files  →  supervisor  ─approved→  agent_1 → agent_2 → editor
+    attached files  →  supervisor  ─approved→  agent_1 → agent_2
           ↓ rejected
-    archive search  →  supervisor  ─approved→  agent_1 → agent_2 → editor
+    archive search  →  supervisor  ─approved→  agent_1 → agent_2
           ↓ rejected
-    web search      →  supervisor  ─approved→  agent_1 → agent_2 → editor
+    web search      →  supervisor  ─approved→  agent_1 → agent_2
           ↓ rejected
     "I don't have relevant information"
 
@@ -55,6 +55,9 @@ ui.inject_css()
 
 # ── Fixed settings (previously sidebar controls) ─────────────
 MODEL_NAME = "openai/gpt-oss-120b"
+# The supervisor only emits one line of YES/NO, so it runs on a smaller model at
+# temperature 0 — a routing gate should not be a sampled generation.
+SUPERVISOR_MODEL = "openai/gpt-oss-20b"
 TEMPERATURE = 0.7
 TOP_K = 4
 RELEVANCE_FLOOR = 0.25      # below this, retrieval is treated as a miss
@@ -79,7 +82,6 @@ class AgentState(TypedDict):
     verdict: str
     attempts: list       # [(source, verdict), …] across the whole ladder
     analysis_1: str
-    analysis_2: str
     final_response: str
 
 
@@ -116,6 +118,11 @@ def get_graph():
     store = get_vector_store()
     llm = ChatGroq(model=MODEL_NAME, api_key=os.getenv("GROQ_API_KEY"),
                    temperature=TEMPERATURE)
+    # No max_tokens: the cap counts this model's reasoning tokens, and a verdict
+    # truncated to an empty string reads as a rejection. The prompt bounds the
+    # visible output to one line, which is bound enough.
+    grader_llm = ChatGroq(model=SUPERVISOR_MODEL, api_key=os.getenv("GROQ_API_KEY"),
+                          temperature=0)
 
     def gather_context(state: AgentState) -> AgentState:
         """Load the next source on the ladder: attached → archive → web."""
@@ -167,17 +174,26 @@ def get_graph():
             state["verdict"] = f"Web search unavailable: {context[18:].strip()}"
         else:
             prompt = (
-                "You are a strict retrieval supervisor. Decide whether the passages "
-                "below contain enough information to answer the question. Partial but "
-                "genuinely on-topic material counts as sufficient; material that is "
-                "merely on a related subject does not.\n\n"
+                "You are a retrieval supervisor. Decide whether the passages below "
+                "give a useful starting point for answering the question. General "
+                "guidance that bears on the question counts as sufficient — expert "
+                "agents downstream will adapt it to the specific camera and scene, "
+                "so the passages need not name either. Reject only material that is "
+                "off-topic, or too thin to inform an answer at all.\n\n"
                 f"Question: {state['user_input']}\n\n"
                 f"Passages:\n{context}\n\n"
                 "Reply with exactly one line: 'YES - <reason>' or 'NO - <reason>'."
             )
-            verdict = llm.invoke([HumanMessage(content=prompt)]).content.strip()
-            state["verdict"] = verdict
-            state["approved"] = verdict.upper().lstrip("*# ").startswith("YES")
+            verdict = grader_llm.invoke([HumanMessage(content=prompt)]).content.strip()
+            # Only the first word routes; the rest is shown in the trace panel. An
+            # empty reply means the token cap swallowed the line, so fall through
+            # to the next source rather than silently reading it as a rejection.
+            if not verdict:
+                state["verdict"] = "The grader returned nothing; trying the next source."
+                state["approved"] = False
+            else:
+                state["verdict"] = verdict
+                state["approved"] = verdict.upper().lstrip("*# ").startswith("YES")
 
         attempts.append((src, state["verdict"]))
         state["attempts"] = attempts
@@ -192,36 +208,38 @@ def get_graph():
         prompt = (
             "You are a helpful Cameramen assistant. When asked to analyze something, "
             "analyze scenic nature so that another agent could write a proper camera "
-            "settings for it. Do not give the settings yourself, just analyze the scene and give the details of that scene like lighting, time of day, weather, and any other relevant information that would help another agent to write the proper camera settings for it."
-            f"settings for it.\n\nReference documents:\n{state['context']}\n\n"
+            "settings for it. Do not give the settings yourself, just analyze the "
+            "scene and give the details of that scene like lighting, time of day, "
+            "weather, and any other relevant information that would help another "
+            "agent to write the proper camera settings for it.\n\n"
+            "Keep it to a reasonable length — a brief the next agent can read in a "
+            "few seconds, not an exhaustive document. Cover what actually bears on "
+            "the settings, and leave out venue history, gear lists, safety advice "
+            "and scenarios the user did not ask about. Where the reference documents "
+            "are silent, draw on what you know about scenes like this rather than "
+            "reporting the detail as unknown.\n\n"
+            f"Reference documents:\n{state['context']}\n\n"
             f"Analyze this: {state['user_input']}"
         )
         state["analysis_1"] = llm.invoke([HumanMessage(content=prompt)]).content
         return state
 
     def agent_2(state: AgentState) -> AgentState:
-        prompt = (
-            "You are a helpful assistant. Analyze the scenic information you got from agent 1 and provide detailed camera settings for that "
-            "camera brand/model.\n\n"
-            f"Reference documents:\n{state['context']}\n\n"
-            f"Agent 1 analysis:\n{state['analysis_1']}\n\n"
-            f"Give the settings for: {state['user_input']}"
-        )
-        state["analysis_2"] = llm.invoke([HumanMessage(content=prompt)]).content
-        return state
-
-    def response_generator(state: AgentState) -> AgentState:
+        """Settings, written straight into the final format the reader sees."""
         note = {
             "attached": "The material came from files the user attached.",
             "retrieved": "The material came from the user's own ingested documents.",
             "web": ("The material came from a live web search because neither the "
                     "attached files nor the archive covered this. Say so in one short "
-                    "line at the end, and cite the source URLs you relied on."),
+                    "line at the end, citing only URLs that appear verbatim in the "
+                    "reference documents above. If none appear there, name the source "
+                    "in words and give no URL. Never invent a link."),
         }.get(state["source"], "")
         prompt = (
-            "You are writing for a photographer standing in front of the scene, who "
-            "may only have a few seconds to read. Lead with the numbers; explain "
-            "after.\n\n"
+            "You choose camera settings for the scene below and write them up as the "
+            "final answer. You are writing for a photographer standing in front of "
+            "the scene, who may only have a few seconds to read. Lead with the "
+            "numbers; explain after.\n\n"
             "Format the answer in exactly this order:\n\n"
             "1. A markdown table titled '**Start here**' with two columns, Setting "
             "and Value, and one row each for: Mode, Aperture, Shutter, ISO, White "
@@ -236,11 +254,17 @@ def get_graph():
             "4. '**On your camera**' — only if the reference material describes where "
             "these controls live on this specific body; two or three bullets. Omit "
             "the section entirely otherwise.\n\n"
-            "Never put a caveat or a preamble before the table. Do not repeat a value "
-            "in prose that already appears in the table.\n\n"
-            f"Scene analysis: {state['analysis_1']}\n\n"
-            f"Settings analysis: {state['analysis_2']}\n\n"
-            f"{note}\n\nWrite the final answer now."
+            "Write nothing outside those four sections: no preamble, no caveat before "
+            "the table, no closing summary. Do not restate the scene analysis, and do "
+            "not repeat in prose a value that already appears in the table. Cover only "
+            "the conditions the user asked about — do not add alternative scenarios, "
+            "lenses or accessories they did not mention.\n\n"
+            "Before you answer, check the table against the light level in the scene "
+            "analysis: the aperture, shutter and ISO you give must expose correctly "
+            "together at that level.\n\n"
+            f"Reference documents:\n{state['context']}\n\n"
+            f"Scene analysis:\n{state['analysis_1']}\n\n"
+            f"{note}\n\nSettings for: {state['user_input']}"
         )
         state["final_response"] = llm.invoke([HumanMessage(content=prompt)]).content
         return state
@@ -257,7 +281,6 @@ def get_graph():
     builder.add_node("refuse", refuse)
     builder.add_node("agent_1", agent_1)
     builder.add_node("agent_2", agent_2)
-    builder.add_node("response_generator", response_generator)
 
     builder.add_edge(START, "gather_context")
     builder.add_edge("gather_context", "supervisor")
@@ -266,8 +289,7 @@ def get_graph():
                                    "gather_context": "gather_context"})
     builder.add_edge("refuse", END)
     builder.add_edge("agent_1", "agent_2")
-    builder.add_edge("agent_2", "response_generator")
-    builder.add_edge("response_generator", END)
+    builder.add_edge("agent_2", END)
     return builder.compile()
 
 
@@ -474,7 +496,7 @@ if prompt:
         state = {"user_input": prompt, "attached_context": attached_context,
                  "context": "", "source": "", "stages": stages, "stage": 0,
                  "approved": False, "verdict": "", "attempts": [],
-                 "analysis_1": "", "analysis_2": "", "final_response": ""}
+                 "analysis_1": "", "final_response": ""}
 
         steps, answer, source = [], "", ""
         badge_box = st.container()
@@ -507,7 +529,6 @@ if prompt:
                     else:
                         status.update(label=ui.step_status_label(node))
                         body = (payload.get("final_response")
-                                or payload.get("analysis_2")
                                 or payload.get("analysis_1") or "")
                     steps.append((node, body))
                     if payload.get("final_response"):

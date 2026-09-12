@@ -45,6 +45,7 @@ Multi-Agent-Photography-Assistant/
     ├── COMPONENTS.md         # Detailed component explanation
     ├── USAGE.md              # How to use and customize
     ├── OBSERVABILITY.md      # LangSmith tracing + conversation recording
+    ├── TECHNICAL_CHALLENGES.md    # Problems hit, evidence, and decisions made
     └── IMPLEMENTATION_SUMMARY.md  # Full summary + change log
 ```
 
@@ -123,4 +124,5 @@ agent's working.
 - Want line-by-line detail → `COMPONENTS.md`
 - Want to use or customize it → `USAGE.md`
 - Want traces, stored conversations, or training exports → `OBSERVABILITY.md`
+- Want the problems hit and why they were solved that way → `TECHNICAL_CHALLENGES.md`
 - Want the full change history → `IMPLEMENTATION_SUMMARY.md`
