@@ -31,6 +31,7 @@ STEP_LABELS = {
     "supervisor":         ("Review",    "Checked it answers the question"),
     "agent_1":            ("Scene",     "Read light, motion and depth"),
     "agent_2":            ("Answer",    "Matched settings to your camera"),
+    "validate":           ("Checked",   "Format, links and credentials"),
     # Retained so traces recorded before agent_2 absorbed this step still render.
     "response_generator": ("Answer",    "Wrote the recommendation"),
     "refuse":             ("Stopped",   "No source supports an answer"),
