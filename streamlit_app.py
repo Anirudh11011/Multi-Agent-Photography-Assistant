@@ -39,6 +39,7 @@ from langgraph.graph import StateGraph, START, END
 from ingest_documents import (
     load_file, COLLECTION, PERSIST_DIR, CHUNK_SIZE, CHUNK_OVERLAP,
 )
+import camera_images as cams
 import conversation_store as store
 import observability as obs
 import vintage_theme as ui
@@ -543,6 +544,8 @@ with st.sidebar:
                    icon="⚠️")
     st.caption("LangSmith tracing: "
                + (f"on → project `{obs.project_name()}`" if obs.is_enabled() else "off"))
+    for problem in cams.problems():
+        st.warning(problem, icon="⚠️")
 
 
 # ── Main ─────────────────────────────────────────────────────
@@ -553,6 +556,14 @@ if not os.getenv("GROQ_API_KEY"):
     st.stop()
 
 chat = current_chat()
+# Read before the history renders — chat_input is pinned to the bottom wherever
+# it's called — so the camera panel can open while the agents are still working.
+prompt = st.chat_input("Describe your scene and camera")
+
+# This question's cameras, or the last turn's when it names none.
+previous_cameras = chat["history"][-1].get("cameras", []) if chat["history"] else []
+shown_cameras = cams.for_turn(prompt, previous_cameras) if prompt else previous_cameras
+ui.camera_panel(cams.resolve(shown_cameras))
 
 if not chat["history"]:
     ui.example_card()
@@ -606,7 +617,6 @@ for index, turn in enumerate(chat["history"]):
         ui.caption(f"Answered in {turn['elapsed']:.1f}s{trace_link}")
         feedback_controls(turn, index)
 
-prompt = st.chat_input("Describe your scene and camera")
 if prompt:
     with st.chat_message("user", avatar=ui.USER_AVATAR):
         st.markdown(prompt)
@@ -700,5 +710,5 @@ if prompt:
     chat["history"].append({"question": prompt, "answer": answer, "steps": steps,
                             "source": source, "elapsed": elapsed,
                             "message_id": message_id, "run_id": run.run_id,
-                            "run_url": run.run_url})
+                            "run_url": run.run_url, "cameras": shown_cameras})
     st.rerun()

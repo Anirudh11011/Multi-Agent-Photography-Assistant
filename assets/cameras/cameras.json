@@ -1,0 +1,12 @@
+[
+  {
+    "name": "Sony a6700",
+    "file": "sony-a6700.jpg",
+    "aliases": ["ilce-6700"]
+  },
+   {
+    "name": "Canon R",
+    "file": "canon-r.jpg",
+    "aliases": ["Canon EOS R"]
+  }
+]

@@ -7,6 +7,8 @@ The look is warm and quiet: paper-toned background, one serif for the wordmark,
 a clean sans everywhere else. No ornament that doesn't carry information.
 """
 
+import re
+
 import streamlit as st
 
 # ── Palette ──────────────────────────────────────────────────
@@ -38,6 +40,24 @@ STEP_LABELS = {
 }
 
 TRACE_LABEL = "How this answer was reached"
+
+# Camera pane on the right: open width, collapsed rail width, and the easing
+# shared by every part of the split so the chat and pane move as one.
+PANEL_WIDTH = "360px"
+RAIL_WIDTH = "40px"
+PANE_EASE = ".45s cubic-bezier(.2,.8,.2,1)"
+
+_PANE_TOGGLE = (
+    '<input type="checkbox" id="camera-pane-collapsed" class="camera-pane-state" '
+    'aria-label="Hide the camera panel">'
+    '<label for="camera-pane-collapsed" class="camera-pane-rail" title="Show the camera panel">'
+    '<span class="chevron">‹</span><span class="text">{label}</span></label>'
+)
+_PANE_HEAD = (
+    '<div class="camera-pane-head"><span class="camera-label">{label}</span>'
+    '<label for="camera-pane-collapsed" class="camera-pane-hide" '
+    'title="Hide the camera panel">›</label></div>'
+)
 
 _CSS = f"""
 <style>
@@ -228,6 +248,104 @@ section[data-testid="stSidebar"] .stButton > button[kind="tertiary"]:hover {{
 }}
 [data-testid="stExpander"] summary {{ font-size: .84rem; color: var(--ink-soft); }}
 
+/* ── Camera pane ──────────────────────────────────────────── */
+/* A split pane. When a camera is found the whole app (chat, input, header)
+   narrows from the right, and the pane fills the strip that frees up.
+
+   camera-dock         always rendered, so the chat after it never shifts
+                       position (which would rebuild it); fixed, so it takes
+                       no room.
+   camera-split-*      keyed on the cameras shown: a new camera is a new
+                       element, so it slides in fresh and starts expanded.
+   camera-pane         the pane itself, with a full-height divider.
+   #camera-pane-collapsed  a checkbox, flipped by the pane's hide button and by
+                       the rail. Pure CSS on purpose: a Streamlit button would
+                       rerun the script, and a rerun mid-answer discards it. */
+.st-key-camera-dock {{ position: fixed; top: 0; right: 0; width: 0; height: 0; }}
+
+.stAppViewContainer {{ transition: right {PANE_EASE}; }}
+.stApp:has(.st-key-camera-pane) .stAppViewContainer {{ right: {PANEL_WIDTH}; }}
+.stApp:has(#camera-pane-collapsed:checked) .stAppViewContainer {{ right: {RAIL_WIDTH}; }}
+
+.st-key-camera-pane {{
+    position: fixed; top: 0; right: 0; width: {PANEL_WIDTH};
+    height: 100vh; height: 100dvh; overflow-y: auto;
+    z-index: 100;
+    background: var(--card);
+    border-left: 1px solid var(--line);
+    padding: 1.25rem 1.25rem 1rem;
+    gap: .9rem;
+    transition: transform {PANE_EASE};
+    animation: camera-pane-in {PANE_EASE};
+}}
+@keyframes camera-pane-in {{ from {{ transform: translateX(100%); }} }}
+.stApp:has(#camera-pane-collapsed:checked) .st-key-camera-pane {{
+    transform: translateX(100%);
+}}
+.st-key-camera-pane img {{ border-radius: 10px; max-height: 38vh; object-fit: contain; }}
+.st-key-camera-pane [data-testid="stImageCaption"] {{
+    color: var(--ink); font-size: .84rem; font-weight: 500;
+}}
+/* Comparing two cameras: a hairline between them. */
+.st-key-camera-pane [data-testid="stElementContainer"]:has([data-testid="stImage"])
+    ~ [data-testid="stElementContainer"]:has([data-testid="stImage"]) {{
+    border-top: 1px solid var(--line);
+    padding-top: .9rem;
+}}
+
+.camera-pane-head {{
+    display: flex; align-items: center; justify-content: space-between;
+}}
+.camera-label {{
+    font-size: .68rem; font-weight: 600; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--ink-soft);
+}}
+.camera-pane-hide {{
+    display: grid; place-items: center; width: 28px; height: 28px;
+    border-radius: 7px; cursor: pointer;
+    color: var(--ink-soft); font-size: 1.35rem; line-height: 1;
+}}
+.camera-pane-hide:hover {{ background: rgba(154,101,52,.08); color: var(--ink); }}
+
+/* Visually hidden but still reachable by keyboard: Tab to it, Space toggles. */
+.camera-pane-state {{
+    position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none;
+}}
+.stApp:has(.camera-pane-state:focus-visible) :is(.camera-pane-hide, .camera-pane-rail) {{
+    outline: 2px solid var(--accent); outline-offset: -2px;
+}}
+
+/* The rail: a slim strip at the right edge while the pane is collapsed. */
+.camera-pane-rail {{
+    position: fixed; top: 0; right: 0; width: {RAIL_WIDTH};
+    height: 100vh; height: 100dvh; z-index: 100;
+    display: flex; flex-direction: column; align-items: center; gap: .5rem;
+    padding-top: 1.1rem;
+    background: var(--card); border-left: 1px solid var(--line);
+    cursor: pointer; color: var(--ink-soft);
+    font-size: .68rem; font-weight: 600; letter-spacing: .09em; text-transform: uppercase;
+    transform: translateX(100%);
+    transition: transform {PANE_EASE};
+}}
+.camera-pane-rail .chevron {{ font-size: 1.35rem; line-height: 1; letter-spacing: 0; }}
+.camera-pane-rail .text {{ writing-mode: vertical-rl; }}
+.camera-pane-rail:hover {{ color: var(--ink); background: var(--paper); }}
+.stApp:has(#camera-pane-collapsed:checked) .camera-pane-rail {{ transform: none; }}
+
+/* Too narrow to split: the pane opens over the chat instead of beside it. */
+@media (max-width: 1100px) {{
+    .stApp:has(.st-key-camera-pane) .stAppViewContainer {{ right: {RAIL_WIDTH}; }}
+    .st-key-camera-pane {{
+        width: min({PANEL_WIDTH}, 88vw);
+        box-shadow: -12px 0 32px rgba(44,38,33,.14);
+    }}
+}}
+@media (prefers-reduced-motion: reduce) {{
+    .stAppViewContainer, .st-key-camera-pane, .camera-pane-rail {{
+        transition: none; animation: none;
+    }}
+}}
+
 hr {{ border-color: var(--line); }}
 footer, #MainMenu {{ visibility: hidden; }}
 .caption {{ color: var(--ink-soft); font-size: .87rem; line-height: 1.6; }}
@@ -291,6 +409,30 @@ def caption(text: str) -> None:
 def step_status_label(node: str) -> str:
     title, blurb = STEP_LABELS.get(node, (node, ""))
     return f"{title}: {blurb}"
+
+
+def camera_panel(cameras) -> None:
+    """Split pane on the right with the camera(s) the conversation is about.
+
+    cameras: list of (name, image path), at most two, stacked in order. With
+    none, the chat stays full width. See the camera pane CSS for how the pieces
+    fit together.
+    """
+    with st.container(key="camera-dock"):
+        if not cameras:
+            # Something must take the pane's slot: Streamlit leaves a dropped
+            # element on screen until the run ends — the whole agent run.
+            st.empty()
+            return
+        key = "camera-split-" + "-".join(re.sub(r"[^a-z0-9]+", "-", path.name.lower())
+                                         for _, path in cameras)
+        label = "Camera" if len(cameras) == 1 else "Cameras"
+        with st.container(key=key):
+            st.html(_PANE_TOGGLE.format(label=label))
+            with st.container(key="camera-pane"):
+                st.html(_PANE_HEAD.format(label=label))
+                for name, path in cameras:
+                    st.image(str(path), caption=name, width="stretch")
 
 
 def render_trace(steps) -> None:
