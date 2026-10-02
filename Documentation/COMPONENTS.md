@@ -45,7 +45,7 @@ supervisor→gather_context edge would cycle forever.
 
 ```python
 MODEL_NAME = "openai/gpt-oss-120b"
-TEMPERATURE = 0.7
+TEMPERATURE = 0.3
 TOP_K = 4
 RELEVANCE_FLOOR = 0.25      # below this, retrieval is treated as a miss
 MAX_CONTEXT_CHARS = 12000   # budget for attached-file context
@@ -130,16 +130,9 @@ def supervisor(state: AgentState) -> AgentState:
         state["approved"] = False
         state["verdict"] = f"Web search unavailable: {context[18:].strip()}"
     else:
-        prompt = (
-            "You are a strict retrieval supervisor. Decide whether the passages "
-            "below contain enough information to answer the question. Partial but "
-            "genuinely on-topic material counts as sufficient; material that is "
-            "merely on a related subject does not.\n\n"
-            f"Question: {state['user_input']}\n\n"
-            f"Passages:\n{context}\n\n"
-            "Reply with exactly one line: 'YES - <reason>' or 'NO - <reason>'."
-        )
-        verdict = llm.invoke([HumanMessage(content=prompt)]).content.strip()
+        verdict = grader_llm.invoke(
+            P.supervisor_messages(state["question"], context)   # prompts.py
+        ).content.strip()
         state["verdict"] = verdict
         state["approved"] = verdict.upper().lstrip("*# ").startswith("YES")
 
@@ -148,7 +141,7 @@ def supervisor(state: AgentState) -> AgentState:
     return state
 ```
 
-**Input**: `context`, `source`, `user_input`
+**Input**: `context`, `source`, `question` (the standalone rewrite from `triage`)
 **Output**: `approved`, `verdict`, appended `attempts`
 
 Three things worth noting:
@@ -182,11 +175,12 @@ def web_search(query: str) -> str:
     blocks = []
     for r in results:
         title = (r.get("title") or "").strip()[:120]
-        blocks.append(f"[web] {title}\n{r.get('href', '')}\n{(r.get('body') or '').strip()}")
+        blocks.append(f"[web result: {title}]\n{r.get('href', '')}\n"
+                      f"{(r.get('body') or '').strip()}")
     return "\n\n".join(blocks)
 ```
 
-**Input**: the raw user question
+**Input**: the standalone question from `triage`
 **Output**: formatted results, or a `__SEARCH_FAILED__` sentinel
 
 The sentinel rather than an exception is deliberate: a failed search should degrade to
@@ -196,86 +190,32 @@ is not installed.
 
 ---
 
-## 6. Agent 1: Scene Analysis
+## 6. triage, Agent 1 and Agent 2
 
-**File**: `streamlit_app.py` (lines 181–189)
-
-**Purpose**: Analyze scene conditions and photography context.
+The prompt text for these nodes lives in `prompts.py`, not in `streamlit_app.py`. Each
+node is a thin call:
 
 ```python
 def agent_1(state: AgentState) -> AgentState:
-    prompt = (
-        "You are a helpful Cameramen assistant. When asked to analyze something, "
-        "analyze scenic nature so that another agent could write a proper camera "
-        f"settings for it.\n\nReference documents:\n{state['context']}\n\n"
-        f"Analyze this: {state['user_input']}"
-    )
-    state["analysis_1"] = llm.invoke([HumanMessage(content=prompt)]).content
+    state["analysis_1"] = llm.invoke(
+        P.scene_messages(state["question"], state["context"])
+    ).content
     return state
 ```
 
-**Input**: approved `context` + `user_input`
-**Output**: `analysis_1`
+| Node | Prompt | Input | Output |
+|---|---|---|---|
+| `triage` | `TRIAGE_SYSTEM` | message + history | `kind`, `question` |
+| `agent_1` | `SCENE_SYSTEM` | context + `question` | `analysis_1` (scene brief) |
+| `agent_2` | `answer_system(kind)` | context + source note + `analysis_1` + history + message | `final_response` |
 
-It only ever runs on material the supervisor approved, so `context` here is always
-relevant — whether it came from attached files, the archive, or the web.
+The old `response_generator` node was folded into `agent_2` (see
+TECHNICAL_CHALLENGES.md §3). For the prompts themselves, how they're structured, and
+the before/after comparison, see [PROMPTS.md](PROMPTS.md).
 
----
-
-## 7. Agent 2: Camera Settings Provider
-
-**File**: `streamlit_app.py` (lines 191–200)
-
-**Purpose**: Provide specific camera settings based on the scene analysis.
-
-```python
-def agent_2(state: AgentState) -> AgentState:
-    prompt = (
-        "You are a helpful assistant. Provide detailed camera settings of that "
-        "camera model using the information you got from agent 1.\n\n"
-        f"Reference documents:\n{state['context']}\n\n"
-        f"Agent 1 analysis:\n{state['analysis_1']}\n\n"
-        f"Give the settings for: {state['user_input']}"
-    )
-    state["analysis_2"] = llm.invoke([HumanMessage(content=prompt)]).content
-    return state
-```
-
-**Input**: `context` + `analysis_1` + `user_input`
-**Output**: `analysis_2`
-
----
-
-## 8. Response Generator
-
-**File**: `streamlit_app.py` (lines 202–217)
-
-**Purpose**: Combine both analyses into the final answer, and disclose the source.
-
-```python
-def response_generator(state: AgentState) -> AgentState:
-    note = {
-        "attached": "The material came from files the user attached.",
-        "retrieved": "The material came from the user's own ingested documents.",
-        "web": ("The material came from a live web search because neither the "
-                "attached files nor the archive covered this. Say so in one short "
-                "line at the end, and cite the source URLs you relied on."),
-    }.get(state["source"], "")
-    prompt = (
-        "Based on these analyses, generate a response:\n\n"
-        f"Analysis 1: {state['analysis_1']}\n\n"
-        f"Analysis 2: {state['analysis_2']}\n\n"
-        f"{note}\n\nProvide a final answer."
-    )
-    state["final_response"] = llm.invoke([HumanMessage(content=prompt)]).content
-    return state
-```
-
-**Input**: `analysis_1` + `analysis_2` + source note
-**Output**: `final_response`
-
-The source note is what makes a web-sourced answer say so and cite its URLs, instead of
-presenting searched material with the same authority as your own manuals.
+`SOURCE_NOTES` in `prompts.py` is what makes a web-sourced answer say so and cite only
+URLs it was actually given, instead of presenting searched material with the same
+authority as your own manuals.
 
 > **Gap**: this node still sees neither `context` nor `user_input`. It works because
 > both analyses restate the question's substance, but the final wording is one step
@@ -305,6 +245,10 @@ that failed.
 **File**: `streamlit_app.py` (lines 219–243)
 
 ```python
+def route_after_triage(state: AgentState) -> str:
+    return "redirect" if state["kind"] in ("smalltalk", "outside") else "gather_context"
+
+
 def route_after_supervisor(state: AgentState) -> str:
     """Approved → answer. Rejected → next source. Out of sources → refuse."""
     if state["approved"]:
@@ -312,15 +256,18 @@ def route_after_supervisor(state: AgentState) -> str:
     return "gather_context" if state["stage"] < len(state["stages"]) else "refuse"
 
 
-builder.add_edge(START, "gather_context")
+builder.add_edge(START, "triage")
+builder.add_conditional_edges("triage", route_after_triage,
+                              {"redirect": "redirect", "gather_context": "gather_context"})
+builder.add_edge("redirect", END)
 builder.add_edge("gather_context", "supervisor")
 builder.add_conditional_edges("supervisor", route_after_supervisor,
                               {"agent_1": "agent_1", "refuse": "refuse",
                                "gather_context": "gather_context"})
 builder.add_edge("refuse", END)
 builder.add_edge("agent_1", "agent_2")
-builder.add_edge("agent_2", "response_generator")
-builder.add_edge("response_generator", END)
+builder.add_edge("agent_2", "validate")
+builder.add_edge("validate", END)
 ```
 
 **Execution**: Cyclic. The `supervisor → gather_context` mapping is the loop; at most
@@ -570,8 +517,8 @@ once per server, not once per question. Ingestion and query **must** use the sam
 ## 19. LLM Backend (Groq)
 
 **Provider**: Groq API
-**Model**: `openai/gpt-oss-120b`
-**Purpose**: Powers supervisor, agent_1, agent_2, and response_generator
+**Models**: `openai/gpt-oss-120b` (temperature 0.3) for agent_1 and agent_2;
+`openai/gpt-oss-20b` (temperature 0) for triage and supervisor
 
 ```python
 llm = ChatGroq(model=MODEL_NAME, api_key=os.getenv("GROQ_API_KEY"),

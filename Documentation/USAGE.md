@@ -213,19 +213,20 @@ separates them. Do this again after a large ingest or an embedding-model change.
 
 ### The supervisor prompt (smart gate)
 
-`streamlit_app.py`, lines ~155–163. The key sentence controls strictness:
+`SUPERVISOR_SYSTEM` in `prompts.py`. The `<criterion>` block controls strictness:
 
-```python
-"Partial but genuinely on-topic material counts as sufficient; material that is "
-"merely on a related subject does not."
+```text
+General guidance that bears on the question counts as sufficient — expert agents
+downstream will adapt it to the specific camera and scene, so the passages need not
+name either. Reject only material that is off-topic, or too thin to inform an answer at all.
 ```
 
 - **Too strict** → useful partial answers get rejected and escalate unnecessarily
 - **Too lenient** → the agents answer from material that doesn't really cover the
   question, which is the failure the gate exists to prevent
 
-If you loosen this, watch the "battery life" style of question — on-topic document,
-missing detail — since that is exactly what a lenient grader lets through.
+This wording is calibrated to gpt-oss-20b at temperature 0 (TECHNICAL_CHALLENGES.md §6).
+If you change it, bump `PROMPT_VERSION` and re-test refusal rates.
 
 ### Retrieve more or fewer chunks
 
@@ -304,70 +305,38 @@ on error so a failure degrades to a refusal instead of crashing.
 
 ## Modifying Agent Behavior
 
-### Changing Agent 1
+All prompt text is in `prompts.py`. Read [PROMPTS.md](PROMPTS.md) first: it explains
+the structure every prompt follows and what to re-test after a change.
 
-Edit `streamlit_app.py`, function `agent_1()` (line 181):
+| To change… | Edit |
+|---|---|
+| What the scene brief covers | `SCENE_SYSTEM` → `<what_to_cover>` |
+| How answers adapt to beginners vs experts | `_ANSWER_BASE` → `<reader>` |
+| What counts as in scope | `TRIAGE_SYSTEM` → `<kinds>` / `<judgement>`, and `_ANSWER_BASE` → `<scope>` |
+| The settings answer template | `_FORMAT_SETTINGS` (keep `REQUIRED_SECTIONS` / `REQUIRED_ROWS` in `streamlit_app.py` in sync) |
+| The off-topic or small-talk reply | `OUTSIDE_SCOPE_REPLY` / `SMALLTALK_REPLY` |
+| How each source is described to the model | `SOURCE_NOTES` and `<sources>` in `_ANSWER_BASE` |
 
-```python
-def agent_1(state: AgentState) -> AgentState:
-    prompt = (
-        f"Your new system prompt here.\n\n"
-        f"Reference documents:\n{state['context']}\n\n"
-        f"Analyze: {state['user_input']}"
-    )
-    state["analysis_1"] = llm.invoke([HumanMessage(content=prompt)]).content
-    return state
-```
+Always bump `PROMPT_VERSION` so stored conversations and LangSmith traces show which
+prompts produced each answer.
 
-Keep the `{state['context']}` interpolation, or the agent loses access to the material
-the supervisor just approved.
-
-> The same prompts also exist in `multiagent_chatbot.py`. Editing one does **not**
-> change the other.
-
-### Grounding the agents more strictly
-
-The supervisor already blocks unsupported questions, so the agents rarely see irrelevant
-material. To also stop them padding from model priors:
-
-```python
-prompt = (
-    f"Answer ONLY from the reference documents below. "
-    f"If they do not cover part of the question, say so explicitly.\n\n"
-    f"Reference documents:\n{state['context']}\n\n"
-    f"Question: {state['user_input']}"
-)
-```
-
-### Giving the Response Generator the original question
-
-It currently sees only the two analyses plus the source note. To close that gap, edit
-`response_generator()` (line 202):
-
-```python
-prompt = (
-    f"The user asked: {state['user_input']}\n\n"
-    "Based on these analyses, generate a response:\n\n"
-    f"Analysis 1: {state['analysis_1']}\n\n"
-    f"Analysis 2: {state['analysis_2']}\n\n"
-    f"{note}\n\nProvide a final answer."
-)
-```
+> `multiagent_chatbot.py` (the legacy CLI) still has its own old inline prompts and is
+> not affected by `prompts.py`.
 
 ### Showing document sources in the answer
 
-Retrieved chunks are currently prefixed with their relevance score. To carry filenames
-through as well, in `gather_context`:
+Built-in guide chunks are labelled `[built-in guide · relevance 0.43]`. To carry
+filenames through as well, in `gather_context`:
 
 ```python
 state["context"] = "\n\n".join(
-    f"[{d.metadata.get('source','?')} · relevance {s:.2f}]\n{d.page_content}"
+    f"[built-in guide: {d.metadata.get('source','?')} · relevance {s:.2f}]\n{d.page_content}"
     for d, s in kept
 )
 ```
 
-Then the agents can cite which manual a setting came from. Attached files and web
-results already carry `[filename]` and `[web]` labels.
+Attached files and web results already carry `[attached file: …]` and `[web result: …]`
+labels, which the answer prompt explains to the model.
 
 ---
 
@@ -377,7 +346,7 @@ results already carry `[filename]` and `[web]` labels.
 
 ```python
 MODEL_NAME = "openai/gpt-oss-120b"
-TEMPERATURE = 0.7
+TEMPERATURE = 0.3
 ```
 
 Check https://console.groq.com/docs/models for the current list — available model IDs
@@ -478,7 +447,7 @@ What aperture should I use for mountain landscapes with the Canon R5?
 
 - `gather_context` retrieves the Canon R5 note (relevance 0.43)
 - `supervisor`: *YES — the passage gives specific landscape settings*
-- Agent 1 analyzes the scene; Agent 2 produces the settings; the Editor combines them
+- Agent 1 analyzes the scene; Agent 2 writes the answer; `validate` checks links, credentials and format
 - Badge: **Context · archive search**, ~11 s
 
 ### Example 2: Escalated to the web

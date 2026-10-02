@@ -6,15 +6,17 @@ Run with:
 Flow — an escalation ladder. Every source is graded by the supervisor before it
 is used, and a failed grade falls through to the next source:
 
-    attached files  →  supervisor  ─approved→  agent_1 → agent_2
+    triage ─smalltalk | outside→ direct reply, no search
+      ↓ settings | question
+    attached files  →  supervisor  ─approved→  agent_1 → agent_2 → validate
           ↓ rejected
-    archive search  →  supervisor  ─approved→  agent_1 → agent_2
+    archive search  →  supervisor  ─approved→  agent_1 → agent_2 → validate
           ↓ rejected
-    web search      →  supervisor  ─approved→  agent_1 → agent_2
+    web search      →  supervisor  ─approved→  agent_1 → agent_2 → validate
           ↓ rejected
     "I don't have relevant information"
 
-Design lives in vintage_theme.py.
+Prompts live in prompts.py (see Documentation/PROMPTS.md); design in vintage_theme.py.
 """
 
 import os
@@ -29,7 +31,6 @@ import numpy as np
 import streamlit as st
 from dotenv import load_dotenv
 
-from langchain_core.messages import HumanMessage
 from langchain_chroma import Chroma
 from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -42,6 +43,7 @@ from ingest_documents import (
 import camera_images as cams
 import conversation_store as store
 import observability as obs
+import prompts as P
 import vintage_theme as ui
 
 load_dotenv()
@@ -60,13 +62,17 @@ MODEL_NAME = "openai/gpt-oss-120b"
 # The supervisor only emits one line of YES/NO, so it runs on a smaller model at
 # temperature 0 — a routing gate should not be a sampled generation.
 SUPERVISOR_MODEL = "openai/gpt-oss-20b"
-TEMPERATURE = 0.7
+# Low: the answer is numbers someone acts on, not creative writing. Prompts are
+# calibrated to model + temperature — re-check answers if you change either.
+TEMPERATURE = 0.3
 TOP_K = 4
 RELEVANCE_FLOOR = 0.25      # below this, retrieval is treated as a miss
 MAX_CONTEXT_CHARS = 12000   # budget for attached-file context
 MAX_ATTACHED_CHUNKS = 12
 RECENT_CHAT_LIMIT = 12
 WEB_RESULTS = 5             # DuckDuckGo hits pulled on the final fallback
+HISTORY_TURNS = 3           # earlier turns shown to intake and the answer writer
+HISTORY_ANSWER_CHARS = 700  # each earlier answer is trimmed to this
 REFUSAL = ("I couldn't find a reliable source for this in your attached manual, the "
            "built-in guides, or a web search. Rather than guess at settings you'd act "
            "on, I'll say so. Try attaching your camera's manual.")
@@ -169,7 +175,10 @@ def redact_secrets(answer: str) -> tuple[str, list[str]]:
 
 # ── Pipeline ─────────────────────────────────────────────────
 class AgentState(TypedDict):
-    user_input: str
+    user_input: str      # the message exactly as typed
+    history: str         # recent turns, formatted by format_history()
+    kind: str            # "settings" | "question" | "smalltalk" | "outside"
+    question: str        # user_input made standalone by triage; used for search
     attached_context: str
     context: str
     source: str          # "attached" | "retrieved" | "web" | "none"
@@ -193,7 +202,8 @@ def web_search(query: str) -> str:
     blocks = []
     for r in results:
         title = (r.get("title") or "").strip()[:120]
-        blocks.append(f"[web] {title}\n{r.get('href', '')}\n{(r.get('body') or '').strip()}")
+        blocks.append(f"[web result: {title}]\n{r.get('href', '')}\n"
+                      f"{(r.get('body') or '').strip()}")
     return "\n\n".join(blocks)
 
 
@@ -222,6 +232,22 @@ def get_graph():
     grader_llm = ChatGroq(model=SUPERVISOR_MODEL, api_key=os.getenv("GROQ_API_KEY"),
                           temperature=0)
 
+    def triage(state: AgentState) -> AgentState:
+        """Classify the request and make it standalone, before any source is searched."""
+        reply = grader_llm.invoke(
+            P.triage_messages(state["user_input"], state.get("history") or "")
+        ).content.strip()
+        state["kind"], state["question"] = P.parse_triage(reply, state["user_input"])
+        return state
+
+    def redirect(state: AgentState) -> AgentState:
+        """Small talk or clearly not photography — reply directly, search nothing."""
+        if state["kind"] == "smalltalk":
+            state["final_response"], state["source"] = P.SMALLTALK_REPLY, "smalltalk"
+        else:
+            state["final_response"], state["source"] = P.OUTSIDE_SCOPE_REPLY, "outside"
+        return state
+
     def gather_context(state: AgentState) -> AgentState:
         """Load the next source on the ladder: attached → archive → web."""
         stages, idx = state["stages"], state["stage"]
@@ -242,15 +268,15 @@ def get_graph():
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", message="Relevance scores must be")
                 hits = store.similarity_search_with_relevance_scores(
-                    state["user_input"], k=TOP_K, filter={"type": "ingested_document"}
+                    state["question"], k=TOP_K, filter={"type": "ingested_document"}
                 )
             kept = [(d, s) for d, s in hits if s is not None and s >= RELEVANCE_FLOOR]
             state["context"] = "\n\n".join(
-                f"[relevance {s:.2f}]\n{d.page_content}" for d, s in kept
+                f"[built-in guide · relevance {s:.2f}]\n{d.page_content}" for d, s in kept
             )
 
         else:  # web
-            state["context"] = web_search(state["user_input"])
+            state["context"] = web_search(state["question"])
 
         return state
 
@@ -271,18 +297,9 @@ def get_graph():
             state["approved"] = False
             state["verdict"] = f"Web search unavailable: {context[18:].strip()}"
         else:
-            prompt = (
-                "You are a retrieval supervisor. Decide whether the passages below "
-                "give a useful starting point for answering the question. General "
-                "guidance that bears on the question counts as sufficient — expert "
-                "agents downstream will adapt it to the specific camera and scene, "
-                "so the passages need not name either. Reject only material that is "
-                "off-topic, or too thin to inform an answer at all.\n\n"
-                f"Question: {state['user_input']}\n\n"
-                f"Passages:\n{context}\n\n"
-                "Reply with exactly one line: 'YES - <reason>' or 'NO - <reason>'."
-            )
-            verdict = grader_llm.invoke([HumanMessage(content=prompt)]).content.strip()
+            verdict = grader_llm.invoke(
+                P.supervisor_messages(state["question"], context)
+            ).content.strip()
             # Only the first word routes; the rest is shown in the trace panel. An
             # empty reply means the token cap swallowed the line, so fall through
             # to the next source rather than silently reading it as a rejection.
@@ -303,68 +320,19 @@ def get_graph():
         return state
 
     def agent_1(state: AgentState) -> AgentState:
-        prompt = (
-            "You are a helpful Cameramen assistant. When asked to analyze something, "
-            "analyze scenic nature so that another agent could write a proper camera "
-            "settings for it. Do not give the settings yourself, just analyze the "
-            "scene and give the details of that scene like lighting, time of day, "
-            "weather, and any other relevant information that would help another "
-            "agent to write the proper camera settings for it.\n\n"
-            "Keep it to a reasonable length — a brief the next agent can read in a "
-            "few seconds, not an exhaustive document. Cover what actually bears on "
-            "the settings, and leave out venue history, gear lists, safety advice "
-            "and scenarios the user did not ask about. Where the reference documents "
-            "are silent, draw on what you know about scenes like this rather than "
-            "reporting the detail as unknown.\n\n"
-            f"Reference documents:\n{state['context']}\n\n"
-            f"Analyze this: {state['user_input']}"
-        )
-        state["analysis_1"] = llm.invoke([HumanMessage(content=prompt)]).content
+        """Scene brief for the answer writer. Never shown to the user."""
+        state["analysis_1"] = llm.invoke(
+            P.scene_messages(state["question"], state["context"])
+        ).content
         return state
 
     def agent_2(state: AgentState) -> AgentState:
-        """Settings, written straight into the final format the reader sees."""
-        note = {
-            "attached": "The material came from files the user attached.",
-            "retrieved": "The material came from the user's own ingested documents.",
-            "web": ("The material came from a live web search because neither the "
-                    "attached files nor the archive covered this. Say so in one short "
-                    "line at the end, citing only URLs that appear verbatim in the "
-                    "reference documents above. If none appear there, name the source "
-                    "in words and give no URL. Never invent a link."),
-        }.get(state["source"], "")
-        prompt = (
-            "You choose camera settings for the scene below and write them up as the "
-            "final answer. You are writing for a photographer standing in front of "
-            "the scene, who may only have a few seconds to read. Lead with the "
-            "numbers; explain after.\n\n"
-            "Format the answer in exactly this order:\n\n"
-            "1. A markdown table titled '**Start here**' with two columns, Setting "
-            "and Value, and one row each for: Mode, Aperture, Shutter, ISO, White "
-            "balance, Focus, Metering, Drive. Give a single concrete value per row "
-            "(a narrow range only where the light genuinely varies). No prose in the "
-            "table.\n"
-            "2. '**Then adjust**' — at most four one-line bullets, each naming the "
-            "condition and the change to make, e.g. 'Darker than expected: raise ISO "
-            "to 800.'\n"
-            "3. '**Why these settings**' — a short paragraph, no more than four "
-            "sentences, on the reasoning for this scene.\n"
-            "4. '**On your camera**' — only if the reference material describes where "
-            "these controls live on this specific body; two or three bullets. Omit "
-            "the section entirely otherwise.\n\n"
-            "Write nothing outside those four sections: no preamble, no caveat before "
-            "the table, no closing summary. Do not restate the scene analysis, and do "
-            "not repeat in prose a value that already appears in the table. Cover only "
-            "the conditions the user asked about — do not add alternative scenarios, "
-            "lenses or accessories they did not mention.\n\n"
-            "Before you answer, check the table against the light level in the scene "
-            "analysis: the aperture, shutter and ISO you give must expose correctly "
-            "together at that level.\n\n"
-            f"Reference documents:\n{state['context']}\n\n"
-            f"Scene analysis:\n{state['analysis_1']}\n\n"
-            f"{note}\n\nSettings for: {state['user_input']}"
-        )
-        state["final_response"] = llm.invoke([HumanMessage(content=prompt)]).content
+        """The answer the reader sees, in the format for this kind of request."""
+        state["final_response"] = llm.invoke(P.answer_messages(
+            kind=state["kind"], source=state["source"], context=state["context"],
+            brief=state["analysis_1"], history=state.get("history") or "",
+            message=state["user_input"], question=state["question"],
+        )).content
         return state
 
     def validate(state: AgentState) -> AgentState:
@@ -387,11 +355,16 @@ def get_graph():
             findings.append(f"removed {len(invented)} fabricated link(s): "
                             + ", ".join(invented))
 
-        findings.extend(check_format(answer))
+        # Only settings answers have a fixed template; questions are free-form.
+        if state.get("kind") == "settings":
+            findings.extend(check_format(answer))
 
         state["final_response"] = answer
         state["validation"] = findings
         return state
+
+    def route_after_triage(state: AgentState) -> str:
+        return "redirect" if state["kind"] in ("smalltalk", "outside") else "gather_context"
 
     def route_after_supervisor(state: AgentState) -> str:
         """Approved → answer. Rejected → next source. Out of sources → refuse."""
@@ -400,6 +373,8 @@ def get_graph():
         return "gather_context" if state["stage"] < len(state["stages"]) else "refuse"
 
     builder = StateGraph(AgentState)
+    builder.add_node("triage", triage)
+    builder.add_node("redirect", redirect)
     builder.add_node("gather_context", gather_context)
     builder.add_node("supervisor", supervisor)
     builder.add_node("refuse", refuse)
@@ -407,7 +382,11 @@ def get_graph():
     builder.add_node("agent_2", agent_2)
     builder.add_node("validate", validate)
 
-    builder.add_edge(START, "gather_context")
+    builder.add_edge(START, "triage")
+    builder.add_conditional_edges("triage", route_after_triage,
+                                  {"redirect": "redirect",
+                                   "gather_context": "gather_context"})
+    builder.add_edge("redirect", END)
     builder.add_edge("gather_context", "supervisor")
     builder.add_conditional_edges("supervisor", route_after_supervisor,
                                   {"agent_1": "agent_1", "refuse": "refuse",
@@ -452,7 +431,7 @@ def build_attached_context(files, question: str) -> str:
     if not chunks:
         return ""
 
-    joined = "\n\n".join(f"[{lab}]\n{c}" for lab, c in zip(labels, chunks))
+    joined = "\n\n".join(f"[attached file: {lab}]\n{c}" for lab, c in zip(labels, chunks))
     if len(joined) <= MAX_CONTEXT_CHARS:
         return joined
 
@@ -465,7 +444,7 @@ def build_attached_context(files, question: str) -> str:
 
     picked, used = [], 0
     for i in order:
-        block = f"[{labels[i]}]\n{chunks[i]}"
+        block = f"[attached file: {labels[i]}]\n{chunks[i]}"
         if used + len(block) > MAX_CONTEXT_CHARS:
             break
         picked.append(block)
@@ -489,6 +468,17 @@ def session_user_id() -> str:
     if "user_id" not in st.session_state:
         st.session_state.user_id = f"anon-{uuid.uuid4().hex[:12]}"
     return st.session_state.user_id
+
+
+def format_history(turns: list) -> str:
+    """The last few turns as plain text, for follow-ups like "what about at night?"."""
+    lines = []
+    for turn in turns[-HISTORY_TURNS:]:
+        answer = turn["answer"]
+        if len(answer) > HISTORY_ANSWER_CHARS:
+            answer = answer[:HISTORY_ANSWER_CHARS].rstrip() + " …"
+        lines.append(f"User: {turn['question']}\nShutterAide: {answer}")
+    return "\n\n".join(lines)
 
 
 def current_chat() -> dict:
@@ -573,6 +563,8 @@ SOURCE_BADGE = {
     "retrieved": "Built-in guides",
     "web": "Web search",
     "none": "No reliable source",
+    "outside": "Outside photography",
+    "smalltalk": "No sources needed",
 }
 
 SOURCE_STEP = {
@@ -580,6 +572,8 @@ SOURCE_STEP = {
     "retrieved": "the built-in guides",
     "web": "a web search",
     "none": "the remaining sources",
+    "outside": "nothing — not a photography question",
+    "smalltalk": "nothing — no question asked",
 }
 
 
@@ -628,12 +622,14 @@ if prompt:
 
         # The ladder: attached files first (when present), then archive, then web.
         stages = (["attached"] if attached_context else []) + ["retrieved", "web"]
-        state = {"user_input": prompt, "attached_context": attached_context,
+        state = {"user_input": prompt, "history": format_history(chat["history"]),
+                 "kind": "", "question": prompt,
+                 "attached_context": attached_context,
                  "context": "", "source": "", "stages": stages, "stage": 0,
                  "approved": False, "verdict": "", "attempts": [],
                  "analysis_1": "", "final_response": "", "validation": []}
 
-        steps, answer, source = [], "", ""
+        steps, answer, source, kind = [], "", "", ""
         badge_box = st.container()
         trace_box = st.container()
         turn_index = len(chat["history"])
@@ -642,13 +638,18 @@ if prompt:
             turn_index=turn_index,
             user_id=session_user_id(),
             extra_metadata={"model": MODEL_NAME, "attached_files": len(attachments or []),
-                            "stages": stages},
+                            "stages": stages, "prompt_version": P.PROMPT_VERSION},
         )
         with st.status("Finding a reliable source", expanded=False) as status, \
                 obs.traced_run() as run:
             for update in get_graph().stream(state, stream_mode="updates", config=config):
                 for node, payload in update.items():
-                    if node == "gather_context":
+                    if node == "triage":
+                        kind = payload.get("kind", "")
+                        status.update(label=ui.step_status_label(node))
+                        body = (f"**Request:** {kind}\n\n"
+                                f"**Standalone question:** {payload.get('question', '')}")
+                    elif node == "gather_context":
                         source = payload.get("source", "")
                         status.update(label=f"Looking in {SOURCE_STEP.get(source, source)}")
                         body = (f"**Source:** {SOURCE_BADGE.get(source, source)}\n\n"
@@ -703,7 +704,8 @@ if prompt:
         app="streamlit",
         user_id=session_user_id(),
         meta={"attached_files": [f.name for f in (attachments or [])],
-              "stages": stages, "temperature": TEMPERATURE},
+              "stages": stages, "temperature": TEMPERATURE,
+              "prompt_version": P.PROMPT_VERSION, "request_kind": kind},
         **run.as_dict(),
     )
 

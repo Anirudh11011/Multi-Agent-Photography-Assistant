@@ -40,7 +40,7 @@ path when it has nothing to go on.
 
 ### Language Model
 - **Groq ChatGroq**: LLM interface
-- **Model**: openai/gpt-oss-120b, temperature 0.7
+- **Model**: openai/gpt-oss-120b, temperature 0.3 (was 0.7 until the prompt rewrite; see PROMPTS.md)
 
 ### Other
 - **NumPy**: In-memory cosine ranking of attached-file chunks

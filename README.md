@@ -26,11 +26,11 @@ guess. So context has to be earned. Every source is graded by a supervisor agent
 allowed to produce an answer, and the app climbs a ladder until one passes:
 
 ```
-attached files  →  supervisor  ─approved→  Agent 1 → Agent 2 → Editor → answer
+attached files  →  supervisor  ─approved→  Agent 1 → Agent 2 → checks → answer
       ↓ rejected
-archive search  →  supervisor  ─approved→  Agent 1 → Agent 2 → Editor → answer
+archive search  →  supervisor  ─approved→  Agent 1 → Agent 2 → checks → answer
       ↓ rejected
-web search      →  supervisor  ─approved→  Agent 1 → Agent 2 → Editor → answer
+web search      →  supervisor  ─approved→  Agent 1 → Agent 2 → checks → answer
       ↓ rejected
 "I don't have relevant information"
 ```
@@ -50,6 +50,7 @@ that won.
 | [Documentation/SETUP.md](Documentation/SETUP.md) | **Installation, API keys, and how to run it** |
 | [Documentation/ARCHITECTURE.md](Documentation/ARCHITECTURE.md) | The escalation ladder, routing logic, LangGraph flow |
 | [Documentation/COMPONENTS.md](Documentation/COMPONENTS.md) | Each module explained in detail |
+| [Documentation/PROMPTS.md](Documentation/PROMPTS.md) | How the system prompts are written, and what changed |
 | [Documentation/USAGE.md](Documentation/USAGE.md) | Using the app and customizing it |
 | [Documentation/OBSERVABILITY.md](Documentation/OBSERVABILITY.md) | LangSmith tracing and conversation recording |
 | [Documentation/IMPLEMENTATION_SUMMARY.md](Documentation/IMPLEMENTATION_SUMMARY.md) | Full summary and change log |

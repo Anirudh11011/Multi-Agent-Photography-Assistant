@@ -29,10 +29,12 @@ USER_AVATAR = "🎞️"
 BOT_AVATAR = "📷"
 
 STEP_LABELS = {
+    "triage":             ("Intake",    "Worked out what you're asking"),
+    "redirect":           ("Replied",   "No search needed for this message"),
     "gather_context":     ("Context",   "Gathered reference material"),
     "supervisor":         ("Review",    "Checked it answers the question"),
     "agent_1":            ("Scene",     "Read light, motion and depth"),
-    "agent_2":            ("Answer",    "Matched settings to your camera"),
+    "agent_2":            ("Answer",    "Wrote advice for your camera"),
     "validate":           ("Checked",   "Format, links and credentials"),
     # Retained so traces recorded before agent_2 absorbed this step still render.
     "response_generator": ("Answer",    "Wrote the recommendation"),

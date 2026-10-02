@@ -11,11 +11,11 @@ The defining behaviour is the **escalation ladder**. Every source of context is 
 by a supervisor agent before it is allowed to produce an answer:
 
 ```
-attached files  →  supervisor  ─approved→  Agent 1 → Agent 2 → Editor → answer
+attached files  →  supervisor  ─approved→  Agent 1 → Agent 2 → checks → answer
       ↓ rejected
-archive search  →  supervisor  ─approved→  Agent 1 → Agent 2 → Editor → answer
+archive search  →  supervisor  ─approved→  Agent 1 → Agent 2 → checks → answer
       ↓ rejected
-web search      →  supervisor  ─approved→  Agent 1 → Agent 2 → Editor → answer
+web search      →  supervisor  ─approved→  Agent 1 → Agent 2 → checks → answer
       ↓ rejected
 "I don't have relevant information"
 ```
@@ -43,6 +43,7 @@ Multi-Agent-Photography-Assistant/
     ├── ARCHITECTURE.md       # System architecture and routing logic
     ├── SETUP.md              # Installation & setup guide
     ├── COMPONENTS.md         # Detailed component explanation
+    ├── PROMPTS.md            # System prompt design + change log
     ├── USAGE.md              # How to use and customize
     ├── OBSERVABILITY.md      # LangSmith tracing + conversation recording
     ├── TECHNICAL_CHALLENGES.md    # Problems hit, evidence, and decisions made
@@ -122,6 +123,7 @@ agent's working.
 - New to the project → `SETUP.md`
 - Want to understand the routing → `ARCHITECTURE.md`
 - Want line-by-line detail → `COMPONENTS.md`
+- Want to edit a system prompt, or see how they're written → `PROMPTS.md`
 - Want to use or customize it → `USAGE.md`
 - Want traces, stored conversations, or training exports → `OBSERVABILITY.md`
 - Want the problems hit and why they were solved that way → `TECHNICAL_CHALLENGES.md`

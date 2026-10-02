@@ -9,20 +9,26 @@ ChromaDB
     │
     │            ┌──────────────── Files attached in the sidebar (session only)
     │            │
-User Input ──────┴──→ [gather_context]  loads ONE source per pass
+User Input ──→ [triage]  small model: request kind + standalone question
+                   ↓        ↘ smalltalk / outside → direct reply, no search
+                   ↓ settings | question
+                 ──┴──→ [gather_context]  loads ONE source per pass
                             ↓
                       [supervisor]  LLM grades: does this answer the question?
                         ↓        ↓
                  approved      rejected → back to gather_context (next rung)
                         ↓                 …or refuse when rungs run out
-                  [Agent 1: Analysis]     context + user_input
+                  [Agent 1: Scene brief]  context + standalone question
                         ↓
-                  [Agent 2: Settings]     context + analysis_1 + user_input
+                  [Agent 2: Answer]       context + brief + history + message
                         ↓
-                  [Response Generator]    analysis_1 + analysis_2 + source note
+                  [validate]              links, credentials, format (no LLM)
                         ↓
                     User Output
 ```
+
+Every prompt is a system message plus a tagged user message, defined in `prompts.py`.
+See [PROMPTS.md](PROMPTS.md) for how they are written.
 
 There are three pipelines in the project:
 
@@ -94,6 +100,15 @@ pass, which is what terminates the loop.
 
 ## Component Breakdown
 
+### 0. **triage** (intake)
+- **Role**: Sorts the message into `settings`, `question`, `smalltalk` or `outside`, and
+  rewrites follow-ups ("what about at night?") as a standalone question using the last
+  3 turns
+- **Calls the LLM**: gpt-oss-20b at temperature 0, one call per turn
+- `smalltalk` and `outside` go to `redirect`, which replies with a fixed message and
+  searches nothing. The other two continue to the ladder
+- The standalone question, not the raw message, is what gets retrieved, searched and graded
+
 ### 1. **gather_context**
 - **Role**: Load the next rung's material into `state["context"]`
 - **Does NOT call the LLM**
@@ -116,37 +131,36 @@ with the chatbot's own previous chatter instead of your manuals.
   appended to `attempts`
 
 ```python
-prompt = (
-    "You are a strict retrieval supervisor. Decide whether the passages "
-    "below contain enough information to answer the question. Partial but "
-    "genuinely on-topic material counts as sufficient; material that is "
-    "merely on a related subject does not.\n\n"
-    f"Question: {state['user_input']}\n\n"
-    f"Passages:\n{context}\n\n"
-    "Reply with exactly one line: 'YES - <reason>' or 'NO - <reason>'."
-)
+verdict = grader_llm.invoke(
+    P.supervisor_messages(state["question"], context)   # SUPERVISOR_SYSTEM in prompts.py
+).content.strip()
 ```
 
 Unlike the legacy CLI's supervisor — which was a retrieval step with a misleading name —
 this one is a real router. It calls the LLM and it decides where the graph goes next.
 
-### 3. **Agent 1: Scene Analysis**
-- **Role**: Analyzes scenic nature and photography context
-- **Sees**: approved `context` + `user_input`
+### 3. **Agent 1: Scene brief**
+- **Role**: Internal brief on light, motion, depth and tricky tones, plus a safety line
+  when the scene can hurt eyes or camera. Never shown to the user
+- **Sees**: approved `context` + standalone `question`
 - **Output**: `analysis_1`
 
-### 4. **Agent 2: Settings Provider**
-- **Role**: Provides detailed camera settings
-- **Sees**: approved `context` + `analysis_1` + `user_input`
-- **Output**: `analysis_2`
-
-### 5. **Response Generator**
-- **Role**: Final output formatter
-- **Sees**: `analysis_1` + `analysis_2` + a note naming the source rung
+### 4. **Agent 2: Answer**
+- **Role**: Writes the answer the user reads, adapting depth to beginner or expert
+  signals in the message
+- **Sees**: approved `context` + a note naming the source rung + `analysis_1` + recent
+  history + the message as typed (+ the standalone question if different)
+- **Format**: the four-section settings template for `settings`; free-form for `question`
 - **Output**: `final_response`
-- When the winning rung was `web`, the note instructs it to say so and cite URLs
 
-### 6. **refuse**
+### 5. **validate**
+- Deterministic checks: redacts credential-shaped strings, strips URLs not present in
+  the context, and (for `settings` answers only) checks the four-section format
+
+### 6. **redirect**
+- Fixed reply for `smalltalk` or `outside`; `source` is set to the same value
+
+### 7. **refuse**
 - Sets `final_response` to the standard refusal and `source` to `"none"`
 - Reached only when every rung has been tried and rejected
 
@@ -158,7 +172,10 @@ this one is a real router. It calls the LLM and it decides where the graph goes 
 
 ```python
 class AgentState(TypedDict):
-    user_input: str
+    user_input: str        # the message exactly as typed
+    history: str           # last 3 turns, answers trimmed to 700 chars
+    kind: str              # "settings" | "question" | "smalltalk" | "outside"
+    question: str          # standalone rewrite, used for search and grading
     attached_context: str  # pre-ranked text from sidebar files, "" if none
     context: str           # the current rung's material
     source: str            # "attached" | "retrieved" | "web" | "none"
@@ -168,27 +185,29 @@ class AgentState(TypedDict):
     verdict: str           # supervisor's one-line reason
     attempts: list         # [(source, verdict), …] across the whole ladder
     analysis_1: str
-    analysis_2: str
     final_response: str
+    validation: list       # findings from validate
 ```
 
 ### What each node actually receives
 
 | Node | LLM call | Prompt contents |
 |---|---|---|
+| triage | yes | history + message |
+| redirect | no | — |
 | gather_context | no | — (retrieval / search only) |
-| supervisor | yes¹ | user_input + current context |
-| agent_1 | yes | context + user_input |
-| agent_2 | yes | context + analysis_1 + user_input |
-| response_generator | yes | analysis_1 + analysis_2 + source note |
+| supervisor | yes¹ | standalone question + current context |
+| agent_1 | yes | context + standalone question |
+| agent_2 | yes | context + source note + analysis_1 + history + message |
+| validate | no | — |
 | refuse | no | — |
 
 ¹ Skipped when the context is empty or the search failed — those are rejected without
 spending a call.
 
-**LLM calls per query**: 3 for an answer from the first rung, +1 per extra rung
-attempted. A full escalation to web costs 6. A refusal after an empty archive and a
-failed search costs 0.
+**LLM calls per query**: 4 for an answer from the first rung (triage, supervisor,
+agent_1, agent_2), +1 per extra rung attempted. Small talk and off-topic messages cost 1
+(triage only). A refusal after an empty archive and a failed search costs 1.
 
 ### Vector Database (ChromaDB)
 
@@ -214,15 +233,18 @@ Persisted to `./chroma_langchain_db/`.
 ### LangGraph Graph
 
 ```python
-builder.add_edge(START, "gather_context")
+builder.add_edge(START, "triage")
+builder.add_conditional_edges("triage", route_after_triage,
+                              {"redirect": "redirect", "gather_context": "gather_context"})
+builder.add_edge("redirect", END)
 builder.add_edge("gather_context", "supervisor")
 builder.add_conditional_edges("supervisor", route_after_supervisor,
                               {"agent_1": "agent_1", "refuse": "refuse",
                                "gather_context": "gather_context"})
 builder.add_edge("refuse", END)
 builder.add_edge("agent_1", "agent_2")
-builder.add_edge("agent_2", "response_generator")
-builder.add_edge("response_generator", END)
+builder.add_edge("agent_2", "validate")
+builder.add_edge("validate", END)
 ```
 
 The `supervisor → gather_context` edge is the cycle. Maximum three passes, well inside
@@ -283,7 +305,7 @@ smaller chunks — are covered in `USAGE.md` → "Tuning Retrieval".
 ## Web Search Fallback
 
 - **Engine**: DuckDuckGo via the `ddgs` package — no API key, no account, free
-- **Depth**: `WEB_RESULTS = 5`, formatted as `[web] title / URL / snippet`
+- **Depth**: `WEB_RESULTS = 5`, formatted as `[web result: title] / URL / snippet`
 - **Graded like any other rung** — search results are not trusted automatically
 - **Failure handling**: network errors, rate limits, and blocks are caught and surface
   in the trace as "Web search unavailable: …", which the supervisor treats as a
@@ -317,9 +339,9 @@ between the two files** — editing one does not change the other.
 ## LLM Backend
 
 - **Provider**: Groq API
-- **Model**: `openai/gpt-oss-120b` (constant at the top of `streamlit_app.py`)
-- **Temperature**: 0.7
-- **Purpose**: Powers the supervisor, agent_1, agent_2, and response_generator
+- **Models**: `openai/gpt-oss-120b` for agent_1 and agent_2 at temperature 0.3;
+  `openai/gpt-oss-20b` for triage and supervisor at temperature 0 (constants at the top
+  of `streamlit_app.py`)
 - **Authentication**: API key from `.env`; the app stops with a clear message if missing
 
 ---

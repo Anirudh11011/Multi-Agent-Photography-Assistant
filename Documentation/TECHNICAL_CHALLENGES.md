@@ -579,8 +579,10 @@ Identified and deliberately not implemented, in rough priority order:
    data-exposure consequence; see §11.
 5. **Prompt Guard 2 screening** of attached files and web results — see §4. Turn 13
    (§11) raised this from theoretical to demonstrated.
-6. **Instruction-hierarchy hardening** so an instruction arriving inside retrieved text
-   carries less weight than the system's own format contract — see §11.
+6. ~~**Instruction-hierarchy hardening**~~ so an instruction arriving inside retrieved
+   text carries less weight than the system's own format contract — see §11. **Done** in
+   the prompt rewrite: rules in system messages, untrusted text in escaped XML tags.
+   See [PROMPTS.md](PROMPTS.md).
 7. **A deterministic exposure check**, as the advisory smoke alarm described in §10,
    rather than the hard rule originally proposed.
 8. **Extra-content detection in `check_format`** — currently it verifies required
