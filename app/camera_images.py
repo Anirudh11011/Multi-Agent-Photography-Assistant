@@ -21,7 +21,7 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
-ASSET_DIR = Path(__file__).parent / "assets" / "cameras"
+ASSET_DIR = Path(__file__).parent.parent / "assets" / "cameras"
 REGISTRY = ASSET_DIR / "cameras.json"
 MAX_SHOWN = 2
 
@@ -199,5 +199,5 @@ def resolve(files: list[str]) -> list[tuple[str, Path]]:
 
 
 def problems() -> list[str]:
-    """What's wrong with cameras.json, if anything — shown in the sidebar."""
+    """What's wrong with cameras.json, if anything — written to the server log."""
     return list(_registry()[1])

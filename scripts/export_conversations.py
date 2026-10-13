@@ -1,11 +1,11 @@
 """Export recorded conversations for training or evaluation.
 
 Usage:
-    python export_conversations.py                       # summary only
-    python export_conversations.py --out data.jsonl      # every turn, full detail
-    python export_conversations.py --out sft.jsonl --format sft
-    python export_conversations.py --out deploy.jsonl --environment deploy
-    python export_conversations.py --to-langsmith my-dataset
+    python scripts/export_conversations.py                       # summary only
+    python scripts/export_conversations.py --out data.jsonl      # every turn, full detail
+    python scripts/export_conversations.py --out sft.jsonl --format sft
+    python scripts/export_conversations.py --out deploy.jsonl --environment deploy
+    python scripts/export_conversations.py --to-langsmith my-dataset
 
 Formats:
     raw  one JSON object per turn — question, answer, provenance, agent steps
@@ -15,14 +15,17 @@ Formats:
 
 import argparse
 import json
+import os
 import sys
 
 from dotenv import load_dotenv
 
 load_dotenv()
+# Make the app package importable when run as `python scripts/export_conversations.py`.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import conversation_store as store  # noqa: E402  (after load_dotenv)
-import observability as obs  # noqa: E402
+from app import conversation_store as store  # noqa: E402  (after load_dotenv)
+from app import observability as obs  # noqa: E402
 
 
 def write_sft(path: str, limit=None, environment=None) -> int:

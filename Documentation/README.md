@@ -24,15 +24,32 @@ web search      →  supervisor  ─approved→  Agent 1 → Agent 2 → checks 
 
 ```
 Multi-Agent-Photography-Assistant/
-├── streamlit_app.py           # The application — UI + agent pipeline
-├── vintage_theme.py           # All styling: palette, CSS, layout helpers
+├── streamlit_app.py           # The application entry point — wires the page together
+├── app/                       # The app's modules
+│   ├── settings.py            #   fixed model, retrieval and history settings
+│   ├── prompts.py             #   every prompt the agents use
+│   ├── pipeline.py            #   the agent pipeline (LangGraph escalation ladder)
+│   ├── guardrails.py          #   deterministic checks on a finished answer
+│   ├── loaders.py             #   document loaders shared with the ingestion CLI
+│   ├── resources.py           #   cached embeddings, vector store, compiled graph
+│   ├── attachments.py         #   uploaded files → session-only context
+│   ├── conversation_store.py  #   durable transcript database (SQLite / Postgres)
+│   ├── observability.py       #   LangSmith tracing setup and run metadata
+│   ├── sessions.py            #   chat sessions held in session state
+│   ├── theme.py               #   all styling: palette, CSS, layout helpers
+│   ├── camera_images.py       #   camera photos for the side panel
+│   ├── sidebar.py             #   new conversation, manual upload, recent chats
+│   └── chat.py                #   rendering past turns and answering a new one
+├── scripts/                   # Command-line tools (run from the project folder)
+│   ├── ingest_documents.py    #   document ingestion (folder → vector DB)
+│   └── export_conversations.py #  export recorded turns for training or evaluation
+├── evals/                     # Golden dataset and its runner
+├── assets/cameras/            # Camera photos and their registry
+├── static/                    # Files Streamlit serves directly (the backdrop)
 ├── .streamlit/config.toml     # Streamlit's own theme settings
-├── ingest_documents.py        # Document ingestion CLI (folder → vector DB)
-├── observability.py           # LangSmith tracing setup and run metadata
-├── conversation_store.py      # Durable transcript database (SQLite / Postgres)
-├── export_conversations.py    # Export recorded turns for training or evaluation
-├── multiagent_chatbot.py      # Legacy terminal chatbot (older, simpler flow)
-├── main.py                    # Early prototype, superseded — not part of the pipeline
+├── demo/                      # Early demos, not part of the app
+│   ├── multiagent_chatbot.py  #   legacy terminal chatbot (older, simpler flow)
+│   └── main.py                #   early prototype, superseded
 ├── documents/                 # Drop your PDFs / manuals / guides here
 ├── .env                       # Environment variables (API keys, DATABASE_URL)
 ├── requirements.txt           # Python dependencies
@@ -67,7 +84,7 @@ Multi-Agent-Photography-Assistant/
 
 4. **Ingest Documents:**
    ```bash
-   python ingest_documents.py
+   python scripts/ingest_documents.py
    ```
 
 5. **Run the App:**

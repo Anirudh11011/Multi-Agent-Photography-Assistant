@@ -397,9 +397,9 @@ widget chrome matches before the custom CSS loads.
 **File**: `ingest_documents.py` (148 lines) — **unchanged** by the Streamlit work
 
 ```bash
-python ingest_documents.py            # ingests ./documents
-python ingest_documents.py /some/dir  # any folder
-python ingest_documents.py --reset    # wipe the collection first
+python scripts/ingest_documents.py            # ingests ./documents
+python scripts/ingest_documents.py /some/dir  # any folder
+python scripts/ingest_documents.py --reset    # wipe the collection first
 ```
 
 ### Configuration constants (top of file)

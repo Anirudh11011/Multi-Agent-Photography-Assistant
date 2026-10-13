@@ -61,7 +61,7 @@ thread. Chats do not survive a server restart.
 cp ~/Downloads/nikon_z6_manual.pdf documents/
 
 # 2. Re-ingest
-python ingest_documents.py
+python scripts/ingest_documents.py
 
 # 3. Ask about it in the app
 ```
@@ -77,7 +77,7 @@ Use this for a one-off manual you don't want permanently in your corpus.
 ### Ingesting from a different folder
 
 ```bash
-python ingest_documents.py ~/Documents/camera-manuals
+python scripts/ingest_documents.py ~/Documents/camera-manuals
 ```
 
 ### After editing a document
@@ -86,7 +86,7 @@ Chunk IDs are content hashes, so an edited file creates *new* chunks while the o
 linger and can still be retrieved. Rebuild cleanly:
 
 ```bash
-python ingest_documents.py --reset
+python scripts/ingest_documents.py --reset
 ```
 
 Note `--reset` wipes the whole collection, including any legacy chat entries.
@@ -521,7 +521,7 @@ happening.
 
 ### Answers cite outdated information
 Old chunks from an edited document are still in the DB. Run
-`python ingest_documents.py --reset`.
+`python scripts/ingest_documents.py --reset`.
 
 ### Slow responses
 - Check whether the trace shows a full escalation (three rungs = six LLM calls)
@@ -534,7 +534,7 @@ They live in the browser session only. A server restart or a fresh session clear
 ### Vector DB errors
 ```bash
 rm -rf ./chroma_langchain_db/
-python ingest_documents.py
+python scripts/ingest_documents.py
 ```
 
 ---

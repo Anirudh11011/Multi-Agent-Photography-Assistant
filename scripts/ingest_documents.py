@@ -1,9 +1,11 @@
 """Ingest every document in a folder into the Chroma vector store.
 
 Usage:
-    python ingest_documents.py                 # ingests ./documents
-    python ingest_documents.py path/to/folder
-    python ingest_documents.py --reset         # wipe the collection first
+    python scripts/ingest_documents.py                 # ingests ./documents
+    python scripts/ingest_documents.py path/to/folder
+    python scripts/ingest_documents.py --reset         # wipe the collection first
+
+Run from the project folder: the vector store path is relative to it.
 """
 
 import argparse
@@ -14,48 +16,15 @@ import sys
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import (
-    CSVLoader,
-    Docx2txtLoader,
-    PyPDFLoader,
-    TextLoader,
-    UnstructuredHTMLLoader,
+
+# Make the app package importable when run as `python scripts/ingest_documents.py`.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.loaders import (  # noqa: E402  (after the path fix)
+    load_file, COLLECTION, PERSIST_DIR, CHUNK_SIZE, CHUNK_OVERLAP,
 )
 
 DOCS_DIR = "./documents"
-PERSIST_DIR = "./chroma_langchain_db"
-COLLECTION = "multi_agent_collection"
-CHUNK_SIZE = 1000
-CHUNK_OVERLAP = 150
-
-LOADERS = {
-    ".pdf": PyPDFLoader,
-    ".docx": Docx2txtLoader,
-    ".doc": Docx2txtLoader,
-    ".csv": CSVLoader,
-    ".html": UnstructuredHTMLLoader,
-    ".htm": UnstructuredHTMLLoader,
-    ".txt": TextLoader,
-    ".md": TextLoader,
-    ".json": TextLoader,
-    ".py": TextLoader,
-}
-
-
-def load_file(path: str):
-    """Load one file into LangChain Documents, or return [] if unsupported."""
-    ext = os.path.splitext(path)[1].lower()
-    loader_cls = LOADERS.get(ext)
-    if loader_cls is None:
-        print(f"  skipped (unsupported type): {path}")
-        return []
-
-    kwargs = {"encoding": "utf-8"} if loader_cls is TextLoader else {}
-    try:
-        return loader_cls(path, **kwargs).load()
-    except Exception as exc:
-        print(f"  failed: {path} -> {exc}")
-        return []
 
 
 def collect_files(folder: str):

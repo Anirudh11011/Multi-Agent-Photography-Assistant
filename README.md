@@ -63,18 +63,30 @@ that won.
 
 | File | Role |
 |---|---|
-| [streamlit_app.py](streamlit_app.py) | **The application** — UI plus the full agent pipeline |
-| [vintage_theme.py](vintage_theme.py) | Styling: palette, CSS, layout helpers |
-| [ingest_documents.py](ingest_documents.py) | Ingestion CLI — folder of documents → vector database |
-| [observability.py](observability.py) | LangSmith tracing setup and run metadata |
-| [conversation_store.py](conversation_store.py) | Durable transcript store (SQLite / Postgres) |
-| [export_conversations.py](export_conversations.py) | Export recorded turns for evaluation or training |
-| [multiagent_chatbot.py](multiagent_chatbot.py) | Legacy terminal chatbot — older, simpler flow |
-| [main.py](main.py) | Early prototype, superseded — not part of the pipeline |
+| [streamlit_app.py](streamlit_app.py) | **The application entry point** — wires the page together from `app/` |
+| [app/settings.py](app/settings.py) | Fixed model, retrieval and history settings |
+| [app/prompts.py](app/prompts.py) | Every prompt the agents use |
+| [app/pipeline.py](app/pipeline.py) | The agent pipeline (LangGraph escalation ladder) |
+| [app/guardrails.py](app/guardrails.py) | Deterministic checks on a finished answer |
+| [app/loaders.py](app/loaders.py) | Document loaders shared by the app and the ingestion CLI |
+| [app/resources.py](app/resources.py) | Cached embeddings, vector store and compiled graph |
+| [app/attachments.py](app/attachments.py) | Uploaded files → session-only context |
+| [app/conversation_store.py](app/conversation_store.py) | Durable transcript store (SQLite / Postgres) |
+| [app/observability.py](app/observability.py) | LangSmith tracing setup and run metadata |
+| [app/sessions.py](app/sessions.py) | Chat sessions held in session state |
+| [app/theme.py](app/theme.py) | Styling: palette, CSS, layout helpers |
+| [app/camera_images.py](app/camera_images.py) | Camera photos for the side panel |
+| [app/sidebar.py](app/sidebar.py) | Sidebar: new conversation, manual upload, recent chats |
+| [app/chat.py](app/chat.py) | Rendering past turns and answering a new one |
+| [scripts/ingest_documents.py](scripts/ingest_documents.py) | Ingestion CLI — folder of documents → vector database |
+| [scripts/export_conversations.py](scripts/export_conversations.py) | Export recorded turns for evaluation or training |
+| [evals/run_golden.py](evals/run_golden.py) | Runs the golden dataset through the pipeline, without the UI |
+| [demo/multiagent_chatbot.py](demo/multiagent_chatbot.py) | Legacy terminal chatbot — older, simpler flow |
+| [demo/main.py](demo/main.py) | Early prototype, superseded — not part of the pipeline |
 | [documents/](documents/) | Drop camera manuals and photography guides here |
 | [.streamlit/config.toml](.streamlit/config.toml) | Streamlit theme settings |
 
-Start with [streamlit_app.py](streamlit_app.py) — everything the live app does runs through it.
+Start with [streamlit_app.py](streamlit_app.py) — everything the live app does runs through it, and it lists the `app/` modules it calls.
 
 ---
 

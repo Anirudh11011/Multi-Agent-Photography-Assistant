@@ -1,10 +1,16 @@
 [theme]
-base = "light"
-primaryColor = "#9A6534"
-backgroundColor = "#FAF7F1"
-secondaryBackgroundColor = "#FFFFFF"
-textColor = "#2C2621"
-font = "sans serif"
+base = "dark"
+primaryColor = "#34E0B4"
+backgroundColor = "#060A13"
+secondaryBackgroundColor = "#0F1726"
+textColor = "#EAF1F8"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
 
 [server]
 runOnSave = true
+# Serves static/ (the backdrop photograph) at app/static/.
+enableStaticServing = true
+
+[client]
+# Hides the developer menu and deploy button from the people using the app.
+toolbarMode = "minimal"

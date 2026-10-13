@@ -484,7 +484,7 @@ pip install -r requirements.txt
 # Copy camera manuals / photography guides into documents/
 
 # 4. Ingest
-python ingest_documents.py
+python scripts/ingest_documents.py
 
 # 5. Run
 streamlit run streamlit_app.py

@@ -115,7 +115,7 @@ to ask about it once: drop it into the sidebar Context box instead (Step 6).
 ## Step 4: Ingest Documents into the Vector Database
 
 ```bash
-python ingest_documents.py
+python scripts/ingest_documents.py
 ```
 
 Output looks like:
@@ -135,8 +135,8 @@ Done. Collection 'multi_agent_collection' now holds 138 chunk(s) in ./chroma_lan
 
 **Options:**
 ```bash
-python ingest_documents.py /path/to/other/folder   # ingest a different folder
-python ingest_documents.py --reset                 # wipe collection first
+python scripts/ingest_documents.py /path/to/other/folder   # ingest a different folder
+python scripts/ingest_documents.py --reset                 # wipe collection first
 ```
 
 Re-running on an unchanged folder is safe — chunk IDs are content hashes, so nothing is
@@ -183,7 +183,7 @@ and re-run Step 4.
 ## Optional: The Legacy Terminal Chatbot
 
 ```bash
-python multiagent_chatbot.py
+python demo/multiagent_chatbot.py
 ```
 
 This is the original command-line version. It still runs, but it uses an **older,
@@ -252,7 +252,7 @@ need OCR (e.g. `unstructured` with OCR extras, or a separate OCR pass).
 ### ChromaDB errors
 ```bash
 rm -rf ./chroma_langchain_db/
-python ingest_documents.py
+python scripts/ingest_documents.py
 ```
 
 ### Groq API authentication error
@@ -270,15 +270,18 @@ machine falls back to system serif and monospace — colors and layout still app
 ```
 Multi-Agent-Photography-Assistant/
 ├── streamlit_app.py          # ← run this
-├── vintage_theme.py
+├── app/                      # the app's modules (pipeline, prompts, UI, storage)
+├── scripts/
+│   ├── ingest_documents.py   # documents → vector database
+│   └── export_conversations.py # export transcripts for training
+├── evals/                    # golden dataset and its runner
+├── assets/cameras/           # camera photos
+├── static/                   # backdrop image served by Streamlit
 ├── .streamlit/
 │   └── config.toml
-├── ingest_documents.py
-├── observability.py          # LangSmith tracing
-├── conversation_store.py     # transcript database
-├── export_conversations.py   # export transcripts for training
-├── multiagent_chatbot.py     # legacy CLI
-├── main.py                   # early prototype, unused
+├── demo/
+│   ├── multiagent_chatbot.py # legacy CLI
+│   └── main.py               # early prototype, unused
 ├── documents/                # ← your source files here
 │   └── sony_a7iv_manual.pdf
 ├── .env                      # ← your API keys here
@@ -305,7 +308,7 @@ pip install -r requirements.txt
 This project already has a `venv/`. To use it without activating:
 
 ```bash
-./venv/bin/python ingest_documents.py
+./venv/bin/python scripts/ingest_documents.py
 ./venv/bin/python -m streamlit run streamlit_app.py
 ```
 

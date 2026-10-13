@@ -135,26 +135,26 @@ altering the table by hand.
 
 ```bash
 # what's recorded so far
-python export_conversations.py
+python scripts/export_conversations.py
 
 # every turn with agent steps and provenance
-python export_conversations.py --out data.jsonl
+python scripts/export_conversations.py --out data.jsonl
 
 # fine-tuning shape: {"messages": [user, assistant], "metadata": {...}}
-python export_conversations.py --out sft.jsonl --format sft
+python scripts/export_conversations.py --out sft.jsonl --format sft
 
 # production traffic only
-python export_conversations.py --out deploy.jsonl --environment deploy
+python scripts/export_conversations.py --out deploy.jsonl --environment deploy
 
 # push the turns to LangSmith as an evaluation dataset
-python export_conversations.py --to-langsmith photography-assistant-v1
+python scripts/export_conversations.py --to-langsmith photography-assistant-v1
 ```
 
 Exports read whichever database `DATABASE_URL` points at, so pointing the tool at the
 production database pulls the deployed transcripts:
 
 ```bash
-DATABASE_URL="postgresql://…" python export_conversations.py --out prod.jsonl --format sft
+DATABASE_URL="postgresql://…" python scripts/export_conversations.py --out prod.jsonl --format sft
 ```
 
 Filter before training. Turns where `source` is `none` are refusals, and turns with a
