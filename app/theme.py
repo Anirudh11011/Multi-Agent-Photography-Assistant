@@ -519,7 +519,7 @@ footer {{ visibility: hidden; }}
 """
 
 TAGLINE = "Camera settings for the scene in front of you."
-EXAMPLE = "What settings for a mountain landscape on a Canon R5?"
+EXAMPLE = "What settings for a mountain landscape on a Fujifilm X-T5?"
 
 
 def configure_page() -> None:

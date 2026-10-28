@@ -1,6 +1,7 @@
 """Camera pictures — which camera a question is about, and the image to show.
 
-Images live in assets/cameras/, and cameras.json beside them names each one.
+Images live in assets/cameras/Images/, and cameras.json in assets/cameras/
+names each one.
 The rules, applied to the question only (never the answer):
 
     names no camera   →  keep what the previous turn showed
@@ -23,6 +24,8 @@ from pathlib import Path
 
 ASSET_DIR = Path(__file__).parent.parent / "assets" / "cameras"
 REGISTRY = ASSET_DIR / "cameras.json"
+# Exact case matters on Linux, where the app is deployed.
+IMAGE_DIR = ASSET_DIR / "Images"
 MAX_SHOWN = 2
 
 BRANDS = ("sony", "canon", "nikon", "fujifilm", "fuji", "panasonic", "olympus",
@@ -65,7 +68,7 @@ GENERIC = (
 
 @dataclass(frozen=True)
 class Camera:
-    file: str   # image file name, relative to ASSET_DIR — what a turn stores
+    file: str   # image file name, relative to IMAGE_DIR — what a turn stores
     name: str   # caption under the picture
 
 
@@ -142,11 +145,11 @@ def _registry() -> tuple[tuple, tuple[str, ...]]:
 
 def _image(file: str) -> Path | None:
     """The image on disk, forgiving letter case — macOS doesn't care, Linux does."""
-    exact = ASSET_DIR / file
+    exact = IMAGE_DIR / file
     if exact.is_file():
         return exact
-    if ASSET_DIR.is_dir():
-        for candidate in ASSET_DIR.iterdir():
+    if IMAGE_DIR.is_dir():
+        for candidate in IMAGE_DIR.iterdir():
             if candidate.name.lower() == file.lower() and candidate.is_file():
                 return candidate
     return None

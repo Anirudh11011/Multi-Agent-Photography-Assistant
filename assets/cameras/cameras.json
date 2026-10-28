@@ -1,12 +1,45 @@
 [
-  {
-    "name": "Sony a6700",
-    "file": "sony-a6700.jpg",
-    "aliases": ["ilce-6700"]
-  },
-   {
-    "name": "Canon R",
-    "file": "canon-r.jpg",
-    "aliases": ["Canon EOS R"]
-  }
+  { "name": "Sony a1 II",        "file": "sony-a1-ii.jpg",     "aliases": ["a1m2", "ilce-1m2"] },
+  { "name": "Sony a9 III",       "file": "sony-a9-iii.jpg",    "aliases": ["a9m3", "ilce-9m3"] },
+  { "name": "Sony a7R V",        "file": "sony-a7r-v.jpg",     "aliases": ["a7rm5", "a7r5", "ilce-7rm5"] },
+  { "name": "Sony a7 V",         "file": "sony-a7-v.jpg",      "aliases": ["a7m5", "ilce-7m5"] },
+  { "name": "Sony a7 IV",        "file": "sony-a7-iv.jpg",     "aliases": ["a7m4", "ilce-7m4"] },
+  { "name": "Sony a7C II",       "file": "sony-a7c-ii.jpg",    "aliases": ["a7cm2", "ilce-7cm2"] },
+  { "name": "Sony a6700",        "file": "sony-a6700.jpg",     "aliases": ["ilce-6700"] },
+  { "name": "Sony ZV-E10 II",    "file": "sony-zv-e10-ii.jpg", "aliases": ["zve10m2", "zv-e10m2"] },
+  { "name": "Sony FX3",          "file": "sony-fx3.jpg" },
+
+  { "name": "Canon EOS R1",          "file": "canon-r1.jpg" },
+  { "name": "Canon EOS R5 Mark II",  "file": "canon-r5-ii.jpg",  "aliases": ["r5m2"] },
+  { "name": "Canon EOS R6 Mark III", "file": "canon-r6-iii.jpg", "aliases": ["r6m3"] },
+  { "name": "Canon EOS R6 Mark II",  "file": "canon-r6-ii.jpg",  "aliases": ["r6m2"] },
+  { "name": "Canon EOS R8",          "file": "canon-r8.jpg" },
+  { "name": "Canon EOS R7",          "file": "canon-r7.jpg" },
+  { "name": "Canon EOS R50",         "file": "canon-r50.jpg" },
+  { "name": "Canon R",               "file": "canon-r.jpg",      "aliases": ["Canon EOS R"] },
+
+  { "name": "Nikon Z9",      "file": "nikon-z9.jpg" },
+  { "name": "Nikon Z8",      "file": "nikon-z8.jpg" },
+  { "name": "Nikon Z6 III",  "file": "nikon-z6-iii.jpg" },
+  { "name": "Nikon Z5 II",   "file": "nikon-z5-ii.jpg" },
+  { "name": "Nikon Zf",      "file": "nikon-zf.jpg" },
+  { "name": "Nikon Z50 II",  "file": "nikon-z50-ii.jpg" },
+
+  { "name": "Fujifilm X-T5",      "file": "fujifilm-x-t5.jpg" },
+  { "name": "Fujifilm X-T50",     "file": "fujifilm-x-t50.jpg" },
+  { "name": "Fujifilm X-H2S",     "file": "fujifilm-x-h2s.jpg" },
+  { "name": "Fujifilm X100VI",    "file": "fujifilm-x100vi.jpg" },
+  { "name": "Fujifilm X-S20",     "file": "fujifilm-x-s20.jpg" },
+  { "name": "Fujifilm X-E5",      "file": "fujifilm-x-e5.jpg" },
+  { "name": "Fujifilm GFX100 II", "file": "fujifilm-gfx100-ii.jpg" },
+
+  { "name": "Panasonic Lumix S1R II", "file": "panasonic-s1r-ii.jpg" },
+  { "name": "Panasonic Lumix S1 II",  "file": "panasonic-s1-ii.jpg" },
+  { "name": "Panasonic Lumix S5 II",  "file": "panasonic-s5-ii.jpg" },
+  { "name": "Panasonic Lumix S9",     "file": "panasonic-s9.jpg" },
+  { "name": "Panasonic Lumix GH7",    "file": "panasonic-gh7.jpg" },
+  { "name": "Panasonic Lumix G9 II",  "file": "panasonic-g9-ii.jpg" },
+
+  { "name": "OM System OM-1 Mark II", "file": "om-system-om-1-ii.jpg", "aliases": ["om1m2"] },
+  { "name": "OM System OM-3",         "file": "om-system-om-3.jpg" }
 ]

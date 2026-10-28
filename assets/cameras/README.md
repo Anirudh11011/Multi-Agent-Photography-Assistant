@@ -5,7 +5,7 @@ right of the chat. Cameras not listed here simply show no picture.
 
 ## Adding a camera
 
-1. Put the image in this folder (`.jpg`, `.jpeg`, `.png` or `.webp`).
+1. Put the image in the `Images/` folder here (`.jpg`, `.jpeg`, `.png` or `.webp`).
 2. Add an entry to `cameras.json`:
 
 ```json
@@ -25,7 +25,7 @@ right of the chat. Cameras not listed here simply show no picture.
 | Field     | Required | What it does |
 |-----------|----------|--------------|
 | `name`    | yes      | Full model name, brand first. Shown under the picture, and matched in questions. |
-| `file`    | yes      | The image's file name in this folder. |
+| `file`    | yes      | The image's file name in `Images/`. |
 | `aliases` | no       | Extra spellings people type. |
 
 Changes are picked up on the next question; no restart needed. If the file has
