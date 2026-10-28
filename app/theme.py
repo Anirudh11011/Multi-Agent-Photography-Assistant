@@ -131,18 +131,6 @@ a:hover {{ text-decoration: underline; }}
 
 /* ── Masthead ─────────────────────────────────────────────── */
 .masthead {{ text-align: center; padding: 1.4rem 0 1.5rem; }}
-.masthead .logo {{
-    position: relative; width: 52px; height: 52px; margin: 0 auto .9rem;
-    border-radius: 16px; background: var(--gradient);
-    box-shadow: 0 10px 34px rgba(52,224,180,.30), inset 0 1px 0 rgba(255,255,255,.35);
-}}
-/* A lens, drawn with two rings. */
-.masthead .logo::before, .masthead .logo::after {{
-    content: ""; position: absolute; border-radius: 50%;
-    top: 50%; left: 50%; transform: translate(-50%, -50%);
-}}
-.masthead .logo::before {{ width: 26px; height: 26px; border: 3px solid var(--on-accent); }}
-.masthead .logo::after {{ width: 8px; height: 8px; background: var(--on-accent); }}
 .masthead .wordmark {{
     font-size: 2.5rem; font-weight: 700; line-height: 1.15; letter-spacing: -.035em;
     background: linear-gradient(92deg, #FFFFFF 0%, #B9FFEA 45%, #B7BEFF 100%);
@@ -549,9 +537,9 @@ def inject_css() -> None:
 
 
 def masthead(title: str = PAGE_TITLE, tagline: str = TAGLINE) -> None:
-    """Centred wordmark: logo, name, one line of tagline."""
+    """Centred wordmark: name and one line of tagline."""
     st.markdown(
-        f'<div class="masthead"><div class="logo"></div>'
+        f'<div class="masthead">'
         f'<div class="wordmark" role="heading" aria-level="1">{title}</div>'
         f'<div class="tagline">{tagline}</div></div>',
         unsafe_allow_html=True,
