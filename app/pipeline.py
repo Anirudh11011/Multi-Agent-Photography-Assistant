@@ -13,6 +13,10 @@ falls through to the next source:
           ↓ rejected
     "I don't have relevant information"
 
+A conversation with a photo attached skips the ladder entirely:
+
+    image_agent (vision model looks at the photo) → validate
+
 Nothing here touches Streamlit; resources.py holds the cached, compiled graph.
 """
 
@@ -27,7 +31,12 @@ from app import prompts as P
 from app.guardrails import check_format, redact_secrets, strip_invented_urls
 from app.settings import (
     MODEL_NAME, SUPERVISOR_MODEL, TEMPERATURE, TOP_K, RELEVANCE_FLOOR,
-    WEB_RESULTS, REFUSAL,
+    WEB_RESULTS, REFUSAL, VISION_MODEL, VISION_TEMPERATURE,
+)
+
+VISION_NOT_CONFIGURED = (
+    "Image analysis isn't set up yet: no vision model is configured. Set "
+    "`VISION_MODEL` in `app/settings.py` to a model that accepts images."
 )
 
 
@@ -37,8 +46,10 @@ class AgentState(TypedDict):
     kind: str            # "settings" | "question" | "smalltalk" | "outside"
     question: str        # user_input made standalone by triage; used for search
     attached_context: str
+    image_url: str       # data: URL of the attached photo; "" when there is none
+    image_exif: str      # shooting settings read from the photo's EXIF, or ""
     context: str
-    source: str          # "attached" | "retrieved" | "web" | "none"
+    source: str          # "attached" | "retrieved" | "web" | "image" | "none"
     stages: list         # sources still to try, in order
     stage: int           # index of the next source to try
     approved: bool
@@ -49,13 +60,17 @@ class AgentState(TypedDict):
     validation: list      # findings from the validate node, shown in the trace
 
 
-def initial_state(user_input: str, history: str, attached_context: str) -> AgentState:
+def initial_state(user_input: str, history: str, attached_context: str,
+                  image_url: str = "", image_exif: str = "") -> AgentState:
     """A fresh state for one turn, with the ladder this turn will climb."""
     # The ladder: attached files first (when present), then archive, then web.
-    stages = (["attached"] if attached_context else []) + ["retrieved", "web"]
+    # An image turn never climbs it; the stages are kept for the trace metadata.
+    stages = (["image"] if image_url else
+              (["attached"] if attached_context else []) + ["retrieved", "web"])
     return {"user_input": user_input, "history": history,
             "kind": "", "question": user_input,
             "attached_context": attached_context,
+            "image_url": image_url, "image_exif": image_exif,
             "context": "", "source": "", "stages": stages, "stage": 0,
             "approved": False, "verdict": "", "attempts": [],
             "analysis_1": "", "final_response": "", "validation": []}
@@ -85,6 +100,28 @@ def build_graph(vector_store):
     # visible output to one line, which is bound enough.
     grader_llm = ChatGroq(model=SUPERVISOR_MODEL, api_key=os.getenv("GROQ_API_KEY"),
                           temperature=0)
+
+    # Built only when the placeholder has been replaced, so a missing model name
+    # shows up as a clear message on an image turn instead of an API error.
+    vision_llm = (None if VISION_MODEL.startswith("REPLACE_") else
+                  ChatGroq(model=VISION_MODEL, api_key=os.getenv("GROQ_API_KEY"),
+                           temperature=VISION_TEMPERATURE))
+
+    def image_agent(state: AgentState) -> AgentState:
+        """The vision model looks at the attached photo and writes the answer."""
+        state["kind"], state["source"] = "image", "image"
+        # The user's documents, if any, ground camera-specific control names, and
+        # validate() checks links in the answer against them.
+        state["context"] = (state.get("attached_context") or "").strip()
+        if vision_llm is None:
+            state["final_response"] = VISION_NOT_CONFIGURED
+            return state
+        state["final_response"] = vision_llm.invoke(P.image_messages(
+            message=state["user_input"], history=state.get("history") or "",
+            image_url=state["image_url"], exif=state.get("image_exif") or "",
+            context=state["context"],
+        )).content
+        return state
 
     def triage(state: AgentState) -> AgentState:
         """Classify the request and make it standalone, before any source is searched."""
@@ -217,6 +254,10 @@ def build_graph(vector_store):
         state["validation"] = findings
         return state
 
+    def route_start(state: AgentState) -> str:
+        """Only a turn with a photo attached goes to the image analyst."""
+        return "image_agent" if state.get("image_url") else "triage"
+
     def route_after_triage(state: AgentState) -> str:
         return "redirect" if state["kind"] in ("smalltalk", "outside") else "gather_context"
 
@@ -235,8 +276,11 @@ def build_graph(vector_store):
     builder.add_node("agent_1", agent_1)
     builder.add_node("agent_2", agent_2)
     builder.add_node("validate", validate)
+    builder.add_node("image_agent", image_agent)
 
-    builder.add_edge(START, "triage")
+    builder.add_conditional_edges(START, route_start,
+                                  {"image_agent": "image_agent", "triage": "triage"})
+    builder.add_edge("image_agent", "validate")
     builder.add_conditional_edges("triage", route_after_triage,
                                   {"redirect": "redirect",
                                    "gather_context": "gather_context"})

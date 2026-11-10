@@ -8,14 +8,15 @@ from app import theme as ui
 from app import conversation_store as store
 from app import observability as obs
 from app import prompts as P
-from app.attachments import build_attached_context
+from app.attachments import build_attached_context, prepare_image
 from app.pipeline import initial_state
 from app.resources import get_graph
 from app.sessions import format_history, session_user_id
-from app.settings import MODEL_NAME, TEMPERATURE
+from app.settings import MODEL_NAME, TEMPERATURE, VISION_MODEL
 
 SOURCE_BADGE = {
     "attached": "Your attached manual",
+    "image": "Your photo",
     "retrieved": "Built-in guides",
     "web": "Web search",
     "none": "No reliable source",
@@ -25,6 +26,7 @@ SOURCE_BADGE = {
 
 SOURCE_STEP = {
     "attached": "your attached manual",
+    "image": "your photo",
     "retrieved": "the built-in guides",
     "web": "a web search",
     "none": "the remaining sources",
@@ -55,9 +57,16 @@ def feedback_controls(turn: dict, index: int) -> None:
                 st.rerun()
 
 
+def _show_image(chat: dict, turn: dict) -> None:
+    """The photo, in the bubble of the question it was first sent with."""
+    if turn.get("image_shown") and chat.get("image"):
+        st.image(chat["image"]["bytes"], width=260)
+
+
 def render_history(chat: dict) -> None:
     for index, turn in enumerate(chat["history"]):
         with ui.user_message():
+            _show_image(chat, turn)
             st.markdown(turn["question"])
         with ui.assistant_message():
             ui.badge(SOURCE_BADGE.get(turn["source"], turn["source"]))
@@ -102,16 +111,24 @@ def _step_body(node: str, payload: dict, source: str, status) -> str:
 def answer_turn(chat: dict, prompt: str, attachments, shown_cameras: list) -> None:
     """Run the pipeline for one question, render it live, and record the turn."""
     environment = obs.environment()
+    image = chat.get("image")
+    # The photo is shown with the first question about it, then locked in.
+    image_shown = bool(image) and not image["locked"]
+    if image:
+        image["locked"] = True
 
     with ui.user_message():
+        _show_image(chat, {"image_shown": image_shown})
         st.markdown(prompt)
 
     with ui.assistant_message():
         started = time.time()
         with st.spinner("Reading your manual"):
             attached_context = build_attached_context(attachments, prompt) if attachments else ""
+        image_url, image_exif = prepare_image(image["bytes"]) if image else ("", "")
 
-        state = initial_state(prompt, format_history(chat["history"]), attached_context)
+        state = initial_state(prompt, format_history(chat["history"]), attached_context,
+                              image_url=image_url, image_exif=image_exif)
         stages = state["stages"]
 
         steps, answer, source, kind = [], "", "", ""
@@ -122,7 +139,9 @@ def answer_turn(chat: dict, prompt: str, attachments, shown_cameras: list) -> No
             conversation_id=st.session_state.current,
             turn_index=turn_index,
             user_id=session_user_id(),
-            extra_metadata={"model": MODEL_NAME, "attached_files": len(attachments or []),
+            extra_metadata={"model": VISION_MODEL if image else MODEL_NAME,
+                            "attached_files": len(attachments or []),
+                            "has_image": bool(image),
                             "stages": stages, "prompt_version": P.PROMPT_VERSION},
         )
         with st.status("Finding a reliable source", expanded=False) as status, \
@@ -157,14 +176,16 @@ def answer_turn(chat: dict, prompt: str, attachments, shown_cameras: list) -> No
         question=prompt,
         answer=answer,
         source=source,
-        model=MODEL_NAME,
+        model=VISION_MODEL if image else MODEL_NAME,
         elapsed_seconds=elapsed,
         steps=steps,
         environment=environment,
         title=chat["title"],
         app="streamlit",
         user_id=session_user_id(),
+        # The image's name only: the photo itself is never written to the store.
         meta={"attached_files": [f.name for f in (attachments or [])],
+              "image": image["name"] if image else None,
               "stages": stages, "temperature": TEMPERATURE,
               "prompt_version": P.PROMPT_VERSION, "request_kind": kind},
         **run.as_dict(),
@@ -173,4 +194,5 @@ def answer_turn(chat: dict, prompt: str, attachments, shown_cameras: list) -> No
     chat["history"].append({"question": prompt, "answer": answer, "steps": steps,
                             "source": source, "elapsed": elapsed,
                             "message_id": message_id, "run_id": run.run_id,
-                            "run_url": run.run_url, "cameras": shown_cameras})
+                            "run_url": run.run_url, "cameras": shown_cameras,
+                            "image_shown": image_shown})
