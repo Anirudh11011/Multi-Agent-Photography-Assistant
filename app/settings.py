@@ -7,6 +7,20 @@ SUPERVISOR_MODEL = "openai/gpt-oss-20b"
 # Low: the answer is numbers someone acts on, not creative writing. Prompts are
 # calibrated to model + temperature — re-check answers if you change either.
 TEMPERATURE = 0.3
+
+# ── Image analysis ───────────────────────────────────────────
+# PLACEHOLDER: set this to a Groq model that accepts image input before using the
+# image feature. Until it is replaced, an image turn fails with a clear message
+# instead of reaching Groq with a bad model name.
+VISION_MODEL = "qwen/qwen3.8-27b"
+VISION_TEMPERATURE = 0.3
+IMAGE_TYPES = ["jpg", "jpeg", "png", "webp"]
+# Photos are downscaled to this long edge (px) and re-encoded as JPEG before they
+# are sent: enough detail to judge focus, noise and exposure, and well inside the
+# request-size limits of hosted vision APIs.
+IMAGE_MAX_EDGE = 1568
+IMAGE_JPEG_QUALITY = 88
+
 TOP_K = 4
 RELEVANCE_FLOOR = 0.25      # below this, retrieval is treated as a miss
 MAX_CONTEXT_CHARS = 12000   # budget for attached-file context

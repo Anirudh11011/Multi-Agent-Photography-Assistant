@@ -37,9 +37,8 @@ PAGE_ICON = "📷"
 USER_AVATAR = ":material/person:"
 BOT_AVATAR = ":material/photo_camera:"
 
-UPLOAD_HINT = "Add your camera manual"
-
 STEP_LABELS = {
+    "image_agent":        ("Image",     "Looked at your photo"),
     "triage":             ("Intake",    "Worked out what you're asking"),
     "redirect":           ("Replied",   "No search needed for this message"),
     "gather_context":     ("Context",   "Gathered reference material"),
@@ -177,53 +176,67 @@ section[data-testid="stSidebar"] [data-testid="stCaptionContainer"] {{
     color: var(--text-soft) !important; font-size: .76rem !important;
 }}
 
-/* File uploader, reduced to a "+" and one line. The whole row opens the file
-   picker and still accepts a drop. Once files are attached Streamlit lists
-   them in the same box, with its own "add" button for more. */
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {{
-    display: flex; flex-direction: row; align-items: center; justify-content: flex-start;
-    gap: .7rem; min-height: 0; height: auto;
-    padding: .5rem .65rem;
+/* ── Composer: "+" menu beside the chat input ─────────────── */
+.st-key-composer {{ flex-wrap: nowrap; }}
+.st-key-composer [data-testid="stChatInput"] {{ flex: 1 1 auto; min-width: 0; }}
+.st-key-composer-add {{ flex: none; }}
+.st-key-composer-add button {{
+    width: 46px; height: 46px; min-height: 0; padding: 0;
+    display: grid; place-items: center;
+    border: none !important; border-radius: 50% !important;
+    background: var(--gradient) !important; color: var(--on-accent) !important;
+    font-size: 1.5rem; font-weight: 400; line-height: 1;
+    box-shadow: 0 6px 18px rgba(52,224,180,.30);
+    transition: transform .15s ease, box-shadow .2s ease;
+}}
+.st-key-composer-add button p {{ font-size: 1.5rem; color: var(--on-accent); margin: 0; }}
+.st-key-composer-add button:hover {{
+    transform: scale(1.06); box-shadow: 0 8px 22px rgba(52,224,180,.42);
+}}
+/* Popovers have no chevron here: the "+" is the whole control. */
+.st-key-composer-add button [data-testid="stIconMaterial"] {{ display: none; }}
+
+[data-testid="stPopoverBody"] {{
+    background: rgba(13,20,34,.92) !important;
+    border: 1px solid var(--line); border-radius: 18px;
+    -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+    box-shadow: 0 18px 44px rgba(0,0,0,.45);
+    min-width: 320px;
+}}
+[data-testid="stPopoverBody"] [data-testid="stWidgetLabel"] p {{
+    font-size: .72rem; font-weight: 600; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--text-soft);
+}}
+[data-testid="stPopoverBody"] [data-testid="stFileUploaderDropzone"] {{
     background: rgba(255,255,255,.04) !important;
     border: 1px dashed rgba(255,255,255,.20) !important;
-    border-radius: 16px; cursor: pointer;
+    border-radius: 14px; padding: .55rem .7rem;
     transition: background .2s ease, border-color .2s ease;
 }}
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"]:hover {{
+[data-testid="stPopoverBody"] [data-testid="stFileUploaderDropzone"]:not([aria-disabled="true"]):hover {{
     background: rgba(52,224,180,.07) !important;
     border-color: rgba(52,224,180,.55) !important;
 }}
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzoneInstructions"] {{
-    display: none;
-}}
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"]:not(:has([data-testid="stFileChips"]))::after {{
-    content: "{UPLOAD_HINT}"; font-size: .86rem; font-weight: 500; color: var(--text);
-}}
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"]:has([data-testid="stFileChips"]) > div {{ width: 100%; }}
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] :is(button[kind="secondary"], button[kind="borderlessIcon"]) {{
-    position: relative; flex: none;
-    width: 34px; height: 34px; min-height: 0; padding: 0; margin: 0;
-    display: grid; place-items: center;
-    border: none !important; border-radius: 50% !important;
-    background: var(--gradient) !important;
-    box-shadow: 0 4px 14px rgba(52,224,180,.28);
-    transition: transform .15s ease, box-shadow .2s ease;
-}}
-/* The button's own label stays for screen readers; only the "+" is seen. */
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] :is(button[kind="secondary"], button[kind="borderlessIcon"]) > * {{
-    position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%);
-}}
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] :is(button[kind="secondary"], button[kind="borderlessIcon"])::before {{
-    content: "+"; font-size: 1.45rem; font-weight: 400; line-height: 1;
-    color: var(--on-accent);
-}}
-section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"]:hover :is(button[kind="secondary"], button[kind="borderlessIcon"]) {{
-    transform: scale(1.06); box-shadow: 0 6px 18px rgba(52,224,180,.40);
-}}
-section[data-testid="stSidebar"] [data-testid="stFileChip"] {{
+[data-testid="stPopoverBody"] [data-testid="stFileChip"] {{
     background: rgba(255,255,255,.06); border: 1px solid var(--line);
     border-radius: 12px;
 }}
+
+/* The attached photo, as a chip above the input. */
+.st-key-image-preview {{
+    width: fit-content; max-width: 100%;
+    padding: .35rem .5rem .35rem .4rem; margin-bottom: .35rem;
+    background: rgba(13,20,34,.80); border: 1px solid rgba(52,224,180,.30);
+    border-radius: 14px;
+    -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+}}
+.st-key-image-preview img {{ border-radius: 9px; object-fit: cover; height: 52px; }}
+.image-preview-name {{
+    font-size: .82rem; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px;
+    display: inline-block;
+}}
+.st-key-image-preview button {{ padding: .25rem .55rem; font-size: .78rem; }}
 
 /* ── Chat ─────────────────────────────────────────────────── */
 [data-testid="stChatMessage"] {{
