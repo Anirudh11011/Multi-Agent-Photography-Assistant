@@ -39,7 +39,7 @@ Each system prompt follows the same order, with each section in its own XML tag:
 In the user message, long material comes **first** and the question and a one-line
 instruction come **last**, so the model reads the task right before it answers.
 
-### The four prompts
+### The five prompts
 
 | Constant | Pipeline node | Model | Job |
 |---|---|---|---|
@@ -47,6 +47,7 @@ instruction come **last**, so the model reads the task right before it answers.
 | `SUPERVISOR_SYSTEM` | `supervisor` | gpt-oss-20b, temp 0 | Grade each source: `YES - …` / `NO - …` |
 | `SCENE_SYSTEM` | `agent_1` | gpt-oss-120b, temp 0.3 | Internal scene brief (light, motion, depth, safety) |
 | `answer_system(kind)` | `agent_2` | gpt-oss-120b, temp 0.3 | The answer the user reads |
+| `IMAGE_SYSTEM` | `image_agent` | `VISION_MODEL` (placeholder), temp 0.3 | Describe an attached photo, and diagnose it and suggest settings when asked. See [The image analyst](#the-image-analyst) |
 
 ---
 
@@ -133,6 +134,85 @@ steer the model (TECHNICAL_CHALLENGES.md §11). The fixes are:
 This lowers the risk; it does not remove it. The deterministic `validate` node is still
 the last line of defence, and Prompt Guard screening (TECHNICAL_CHALLENGES.md §4) is still
 open.
+
+---
+
+## The image analyst
+
+Added in `PROMPT_VERSION` `2026-11-09.1`. The prompt is `IMAGE_SYSTEM` in
+[`prompts.py`](../app/prompts.py), and its message builder is `image_messages()`.
+
+### When it runs
+
+The user attaches one photo with the **+ → Image upload** menu in the input bar. Each
+conversation allows one image. After the first question about the photo is sent, the
+image is locked in and image upload is disabled for that conversation. **Only a turn
+with an image attached goes to this agent.** Every other turn takes the normal text
+pipeline, unchanged:
+
+```
+START ─image attached→ image_agent ─┐
+  └─no image→ triage → … ladder …   ├→ validate → END
+```
+
+The image branch skips triage, the supervisor and the source ladder. The photo itself is
+the source, so there is nothing to grade, and the vision model writes the answer in one
+call. `validate` still runs: it redacts credentials and strips invented links.
+
+### What it does
+
+The prompt sorts each message into one of two kinds of request (plus follow-ups):
+
+| Request | Example | Answer |
+|---|---|---|
+| describe | "Describe the image" | **What's in the photo**: one paragraph |
+| improve | "Describe the image and tell me how I can change the settings to get a better image" | **What's in the photo** → **What's holding it back** (each problem tied to visible evidence) → **Settings for a better shot** table (Setting / This shot / Next time) → **Also try** |
+| follow-up | "Would a tripod help?" | A short direct answer, without repeating the description |
+
+### Design decisions
+
+- **Settings honesty.** The settings that made a photo aren't recorded in its pixels.
+  `attachments.prepare_image()` reads the shooting fields from the file's EXIF (camera,
+  lens, focal length, aperture, shutter, ISO, mode, metering, flash, white balance) and
+  passes them in an `<exif>` block. The prompt treats EXIF as fact and requires any
+  estimate to be marked `(est.)`, so a guess never appears to be the value the user
+  actually used.
+- **Evidence-based diagnosis.** Each problem must point to something the user can see
+  ("the sky is pure white with no cloud detail"), and the prompt forbids inventing
+  problems when the photo is sound.
+- **Exposure check.** Suggested aperture, shutter and ISO must still expose correctly
+  together, and the answer must name what compensates for any change.
+- **Injection.** Text inside the photo (signs, screens, watermarks) is part of the scene
+  and is never followed as an instruction. Every other input is tagged with `_block()`
+  as usual.
+- **People.** The agent never identifies anyone from their face and never guesses
+  personal traits.
+- **Privacy and payload.** The photo is downscaled to 1568 px on its long edge and
+  re-encoded as JPEG without metadata, so GPS never leaves the app. Only the filename is
+  recorded in `conversations.db`.
+- **Grounding.** If the user also attached documents, they go in as
+  `<reference_material>`, so camera-specific control names come from their manual.
+
+### Message layout
+
+```text
+SYSTEM  IMAGE_SYSTEM (<role> <product> <two_kinds_of_request> <looking_at_the_photo>
+        <settings_honesty> <scope> <untrusted_input> <values> <answer_format>)
+USER    [image: data:image/jpeg;base64,…]
+        <exif>Camera: X-T5 · Aperture: f/2.8 · Shutter: 1/30 s · ISO: 3200 …</exif>
+        <reference_material>…attached docs, or (none)…</reference_material>
+        <conversation_history>…</conversation_history>
+        <user_message>Describe the image and tell me how to get a better shot</user_message>
+        Answer the user's message about the attached photo, …
+```
+
+### Model
+
+`VISION_MODEL` in `app/settings.py` is a **placeholder** (`REPLACE_WITH_VISION_MODEL`).
+Until it is set, an image turn replies with a "not configured" message instead of calling
+the API. Set it to a Groq model that accepts image input. To use another provider,
+change the `ChatGroq(...)` construction in `pipeline.build_graph`. As with every prompt
+here, re-check answers after changing the model, because the prompt is tuned against it.
 
 ---
 

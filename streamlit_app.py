@@ -11,13 +11,14 @@ This file only wires the page together; the work lives in the app/ package:
     app/guardrails.py          deterministic checks on a finished answer
     app/loaders.py             document loaders shared with the ingestion CLI
     app/resources.py           cached embeddings, vector store and compiled graph
-    app/attachments.py         uploaded files → session-only context
+    app/attachments.py         uploaded files → session-only context; photo → image
     app/conversation_store.py  durable transcript store
     app/observability.py       LangSmith tracing
     app/sessions.py            chat sessions held in st.session_state
     app/theme.py               all styling and layout helpers
     app/camera_images.py       camera photos for the side panel
-    app/sidebar.py             new conversation, manual upload, recent chats
+    app/sidebar.py             new conversation, recent chats
+    app/composer.py            input bar with the "+" menu (doc and image upload)
     app/chat.py                rendering past turns and answering a new one
 
 Command-line tools are in scripts/; the pipeline tests are in evals/.
@@ -32,7 +33,7 @@ from app import camera_images as cams
 from app import conversation_store as store
 from app import observability as obs
 from app import theme as ui
-from app import chat as chat_view, sessions, sidebar
+from app import chat as chat_view, composer, sessions, sidebar
 from app.resources import log_operator_notices
 
 load_dotenv()
@@ -48,7 +49,7 @@ ui.inject_css()
 sessions.init()
 log_operator_notices()
 
-attachments = sidebar.render()
+sidebar.render()
 
 # ── Main ─────────────────────────────────────────────────────
 ui.masthead()
@@ -58,9 +59,9 @@ if not os.getenv("GROQ_API_KEY"):
     st.stop()
 
 chat = sessions.current_chat()
-# Read before the history renders — chat_input is pinned to the bottom wherever
+# Read before the history renders — the input bar is pinned to the bottom wherever
 # it's called — so the camera panel can open while the agents are still working.
-prompt = st.chat_input("Describe your scene and camera")
+attachments, prompt = composer.render(chat)
 
 # This question's cameras, or the last turn's when it names none.
 previous_cameras = chat["history"][-1].get("cameras", []) if chat["history"] else []
