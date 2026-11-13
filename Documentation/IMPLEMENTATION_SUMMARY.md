@@ -385,8 +385,10 @@ was never actually interpolated — Agent 2 was working blind.
    slots filled by chunks matching only one half of the question. See ARCHITECTURE.md →
    "Slot competition".
 
-8. **No conversational memory.** Each question is answered independently; previous turns
-   in a chat are displayed but not fed back into the graph.
+8. **Short-term memory is trimmed, not summarised.** Each chat's history is a LangChain
+   `InMemoryChatMessageHistory`; the graph is shown only the most recent whole turns
+   that fit `HISTORY_MAX_TOKENS` (`trim_messages`). A fact from early in a long chat can
+   fall out of view. See COMPONENTS.md → "Short-term memory".
 
 9. **HTML ingestion needs `unstructured`**, which is commented out in requirements.
 
@@ -443,7 +445,7 @@ Measured on the project's corpus with Groq `openai/gpt-oss-120b`:
 2. Pass `user_input` (and optionally `context`) to `response_generator`
 3. Persist recent chats to disk
 4. Show document filenames alongside relevance scores in the context
-5. Conversation memory across turns within a chat
+5. A running summary of turns that fall outside the trimming window, if transcripts show long chats are common
 6. Delete-by-source before re-ingest, to fix the stale-chunk issue properly
 7. A cheaper/faster model for the supervisor than for the agents
 8. Fetch and read full web pages rather than search snippets

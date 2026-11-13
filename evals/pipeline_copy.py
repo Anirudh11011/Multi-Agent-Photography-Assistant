@@ -18,6 +18,8 @@ import re
 import warnings
 from typing import TypedDict
 
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages.utils import count_tokens_approximately, trim_messages
 from langchain_groq import ChatGroq
 from langgraph.graph import StateGraph, START, END
 
@@ -34,8 +36,9 @@ TEMPERATURE = 0.3
 TOP_K = 4
 RELEVANCE_FLOOR = 0.25      # below this, retrieval is treated as a miss
 WEB_RESULTS = 5             # DuckDuckGo hits pulled on the final fallback
-HISTORY_TURNS = 3           # earlier turns shown to intake and the answer writer
-HISTORY_ANSWER_CHARS = 700  # each earlier answer is trimmed to this
+# Short-term memory: the most recent whole turns that fit this token budget.
+HISTORY_MAX_TOKENS = 1500
+HISTORY_ANSWER_CHARS = 2000  # each earlier answer is clipped to this first
 REFUSAL = ("I couldn't find a reliable source for this in your attached manual, the "
            "built-in guides, or a web search. Rather than guess at settings you'd act "
            "on, I'll say so. Try attaching your camera's manual.")
@@ -347,11 +350,27 @@ def build_graph(store):
 
 
 def format_history(turns: list) -> str:
-    """The last few turns as plain text, for follow-ups like "what about at night?"."""
-    lines = []
-    for turn in turns[-HISTORY_TURNS:]:
+    """Recent turns as plain text, for follow-ups like "what about at night?".
+
+    Golden cases store history as {"question", "answer"} dicts; they are turned into
+    LangChain messages and trimmed exactly as app/sessions.format_history does.
+    """
+    messages = []
+    for turn in turns:
         answer = turn["answer"]
         if len(answer) > HISTORY_ANSWER_CHARS:
             answer = answer[:HISTORY_ANSWER_CHARS].rstrip() + " …"
-        lines.append(f"User: {turn['question']}\nShutterAide: {answer}")
-    return "\n\n".join(lines)
+        messages += [HumanMessage(content=turn["question"]), AIMessage(content=answer)]
+    kept = trim_messages(
+        messages,
+        max_tokens=HISTORY_MAX_TOKENS,
+        token_counter=count_tokens_approximately,
+        strategy="last",
+        start_on="human",
+        end_on="ai",
+        allow_partial=False,
+    )
+    if not kept and len(messages) >= 2:
+        kept = messages[-2:]
+    return "\n\n".join(f"User: {q.content}\nShutterAide: {a.content}"
+                       for q, a in zip(kept[0::2], kept[1::2]))

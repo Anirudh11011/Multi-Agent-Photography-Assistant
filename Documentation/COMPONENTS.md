@@ -309,25 +309,103 @@ material — close the browser tab and they are gone.
 
 ## 12. Chat Sessions
 
-**File**: `streamlit_app.py` (lines 300–317)
+**File**: `app/sessions.py`
 
 ```python
 def new_chat() -> str:
     cid = uuid.uuid4().hex[:8]
-    st.session_state.chats[cid] = {"title": "New conversation", "history": [],
+    st.session_state.chats[cid] = {"title": "New conversation",
+                                   "history": InMemoryChatMessageHistory(),
                                    "created": time.time()}
     st.session_state.current = cid
-    return cid
+    ...
 ```
 
 Conversations live in `st.session_state.chats`, keyed by a short uuid. Each holds a
-title, a history list, and a creation timestamp. The title is replaced by the first 40
-characters of the first question asked. The sidebar lists them newest-first, capped at
-`RECENT_CHAT_LIMIT`.
+title, a LangChain `InMemoryChatMessageHistory`, and a creation timestamp. The title is
+replaced by the first 40 characters of the first question asked. The sidebar lists them
+newest-first, capped at `RECENT_CHAT_LIMIT`.
+
+### The message history
+
+A turn is stored as a `HumanMessage` (the question) followed by an `AIMessage` (the
+answer). What the chat view needs to redraw a turn rides on the messages'
+`additional_kwargs`:
+
+| Message | `additional_kwargs` |
+|---|---|
+| `HumanMessage` | `image_shown` |
+| `AIMessage` | `steps`, `source`, `elapsed`, `message_id`, `run_id`, `run_url`, `cameras` |
+
+Code outside `sessions.py` does not touch the messages directly; it uses these helpers:
+
+| Helper | Used by | Returns |
+|---|---|---|
+| `add_turn(chat, question, answer, image_shown=…, **meta)` | `chat.answer_turn` | appends the message pair |
+| `turns(chat)` | `chat.render_history` | turn dicts (`question`, `answer`, + metadata) |
+| `turn_count(chat)` / `last_turn(chat)` | `chat.py`, `streamlit_app.py` | turn index; last turn's cameras |
+| `get_session_history(cid)` | — | the history object, in the shape `RunnableWithMessageHistory` expects |
+| `format_history(history)` | `chat.answer_turn` | the trimmed history as text for the graph |
+
+`st.session_state` is still the container — Streamlit reruns the script on every
+interaction, so the history object has to live there to survive. LangChain owns the
+*shape* of the history; Streamlit only keeps it alive.
+
+### Short-term memory: token-budget trimming
+
+The graph never sees the stored history directly. `format_history()` cuts it down to
+what fits a token budget, and that text goes into `AgentState.history`, which triage
+(to rewrite follow-ups into standalone questions) and the answer writer read.
+
+```python
+kept = trim_messages(
+    clipped,                                   # answers clipped to HISTORY_ANSWER_CHARS
+    max_tokens=HISTORY_MAX_TOKENS,             # 1500
+    token_counter=count_tokens_approximately,
+    strategy="last",                           # keep the most recent turns
+    start_on="human", end_on="ai",             # whole turns only
+    allow_partial=False,
+)
+if not kept and len(clipped) >= 2:
+    kept = clipped[-2:]                        # always keep the latest turn
+```
+
+Step by step:
+
+1. **Clip each earlier answer** to `HISTORY_ANSWER_CHARS` (2000) characters, on a copy.
+   One long answer can't use up the whole budget and push every other turn out.
+2. **Keep the most recent whole turns** that fit in `HISTORY_MAX_TOKENS` (1500).
+   Tokens are estimated (`count_tokens_approximately`, ~4 chars per token) — Groq's
+   `gpt-oss` tokenizer isn't available locally, and the budget doesn't need to be exact.
+3. **Never return nothing for a non-empty chat.** If even the latest turn doesn't fit,
+   it's kept anyway, so "what about at night?" always has its context.
+
+Both settings are in `app/settings.py`. The effect: a chat of short exchanges keeps
+many turns (ten 100-character answers all fit); a chat of long answers keeps two or
+three. The old rule was a fixed 3 turns with answers cut to 700 characters, which
+wasted budget on short chats and cut useful detail from long answers.
+
+**Why trimming, not summarising or deleting.** Three ways to bound short-term memory
+were considered:
+
+| Method | Verdict | Reason |
+|---|---|---|
+| **Trimming** | ✅ used | Follow-ups are short and local; triage rewrites each message into a standalone question; the user's camera is carried forward separately (`cams.for_turn(prompt, previous_cameras)`). No extra LLM call, no added latency, nothing invented. |
+| **Summarising** | Not now | Helps only in long chats where an early fact matters again. Costs an LLM call per turn and is lossy — a summary that drops or distorts a detail produces wrong camera settings. Revisit if the transcript store shows many conversations past ~5 turns. |
+| **Deleting** (`RemoveMessage`) | ❌ | The same history drives the chat view: every past turn, its feedback buttons and trace link are rendered from it. Deleting would erase them from screen. Trimming bounds what the model sees without losing anything. |
+
+Trimming only ever affects what the model is *shown*. The stored history is never
+changed, so the chat view still replays every turn, and every turn is still written in
+full to the transcript store.
+
+**Evals:** `evals/pipeline_copy.py` has its own copy of `format_history()` that turns the
+golden cases' `{"question", "answer"}` dicts into messages and trims them the same way.
+Keep the two in step.
 
 **Scope**: browser session. Chats survive Streamlit reruns and switching between
-conversations, but not a server restart or a page reload in a new session. Persisting
-them would mean writing to disk, which is not implemented.
+conversations, but not a server restart or a page reload in a new session. (Every turn
+is also recorded in the transcript store, but chats are not reloaded from it.) Swapping
+`InMemoryChatMessageHistory` for `SQLChatMessageHistory` would make them persistent.
 
 ---
 

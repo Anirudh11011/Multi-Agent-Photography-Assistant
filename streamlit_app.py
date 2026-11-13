@@ -64,11 +64,12 @@ chat = sessions.current_chat()
 attachments, prompt = composer.render(chat)
 
 # This question's cameras, or the last turn's when it names none.
-previous_cameras = chat["history"][-1].get("cameras", []) if chat["history"] else []
+last = sessions.last_turn(chat)
+previous_cameras = last.get("cameras", []) if last else []
 shown_cameras = cams.for_turn(prompt, previous_cameras) if prompt else previous_cameras
 ui.camera_panel(cams.resolve(shown_cameras))
 
-if not chat["history"]:
+if not sessions.turn_count(chat):
     ui.example_card()
 
 chat_view.render_history(chat)

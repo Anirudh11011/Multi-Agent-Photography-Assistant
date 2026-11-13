@@ -173,7 +173,7 @@ this one is a real router. It calls the LLM and it decides where the graph goes 
 ```python
 class AgentState(TypedDict):
     user_input: str        # the message exactly as typed
-    history: str           # last 3 turns, answers trimmed to 700 chars
+    history: str           # recent whole turns within HISTORY_MAX_TOKENS (sessions.format_history)
     kind: str              # "settings" | "question" | "smalltalk" | "outside"
     question: str          # standalone rewrite, used for search and grading
     attached_context: str  # pre-ranked text from sidebar files, "" if none

@@ -11,7 +11,7 @@ from app import prompts as P
 from app.attachments import build_attached_context, prepare_image
 from app.pipeline import initial_state
 from app.resources import get_graph
-from app.sessions import format_history, session_user_id
+from app.sessions import add_turn, format_history, session_user_id, turn_count, turns
 from app.settings import MODEL_NAME, TEMPERATURE, VISION_MODEL
 
 SOURCE_BADGE = {
@@ -64,7 +64,7 @@ def _show_image(chat: dict, turn: dict) -> None:
 
 
 def render_history(chat: dict) -> None:
-    for index, turn in enumerate(chat["history"]):
+    for index, turn in enumerate(turns(chat)):
         with ui.user_message():
             _show_image(chat, turn)
             st.markdown(turn["question"])
@@ -134,7 +134,7 @@ def answer_turn(chat: dict, prompt: str, attachments, shown_cameras: list) -> No
         steps, answer, source, kind = [], "", "", ""
         badge_box = st.container()
         trace_box = st.container()
-        turn_index = len(chat["history"])
+        turn_index = turn_count(chat)
         config = obs.run_config(
             conversation_id=st.session_state.current,
             turn_index=turn_index,
@@ -191,8 +191,7 @@ def answer_turn(chat: dict, prompt: str, attachments, shown_cameras: list) -> No
         **run.as_dict(),
     )
 
-    chat["history"].append({"question": prompt, "answer": answer, "steps": steps,
-                            "source": source, "elapsed": elapsed,
-                            "message_id": message_id, "run_id": run.run_id,
-                            "run_url": run.run_url, "cameras": shown_cameras,
-                            "image_shown": image_shown})
+    add_turn(chat, prompt, answer, image_shown=image_shown,
+             steps=steps, source=source, elapsed=elapsed,
+             message_id=message_id, run_id=run.run_id,
+             run_url=run.run_url, cameras=shown_cameras)

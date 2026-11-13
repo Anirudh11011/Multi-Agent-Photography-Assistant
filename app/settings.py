@@ -27,8 +27,12 @@ MAX_CONTEXT_CHARS = 12000   # budget for attached-file context
 MAX_ATTACHED_CHUNKS = 12
 RECENT_CHAT_LIMIT = 12
 WEB_RESULTS = 5             # DuckDuckGo hits pulled on the final fallback
-HISTORY_TURNS = 3           # earlier turns shown to intake and the answer writer
-HISTORY_ANSWER_CHARS = 700  # each earlier answer is trimmed to this
+# Short-term memory: the most recent whole turns that fit this token budget are
+# shown to triage and the answer writer (see sessions.format_history).
+HISTORY_MAX_TOKENS = 1500
+# Each earlier answer is clipped to this first, so one long answer can't use up
+# the whole budget and push every other turn out.
+HISTORY_ANSWER_CHARS = 2000
 REFUSAL = ("I couldn't find a reliable source for this in your attached manual, the "
            "built-in guides, or a web search. Rather than guess at settings you'd act "
            "on, I'll say so. Try attaching your camera's manual.")
