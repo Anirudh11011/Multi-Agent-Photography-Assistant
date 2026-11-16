@@ -1,8 +1,11 @@
 """Sidebar: new conversation + recent chats. Uploads live in the input bar (composer.py)."""
 
+import time
+
 import streamlit as st
 
 from app import sessions
+from app import theme as ui
 from app.settings import RECENT_CHAT_LIMIT
 
 
@@ -12,6 +15,7 @@ def render() -> None:
         if st.button("New conversation", type="primary", icon=":material/edit_square:",
                      use_container_width=True):
             sessions.new_chat()
+            st.session_state.close_drawer = True
             st.rerun()
 
         st.markdown("### Conversations")
@@ -25,4 +29,11 @@ def render() -> None:
                              type="secondary" if is_open else "tertiary",
                              use_container_width=True):
                     st.session_state.current = cid
+                    st.session_state.close_drawer = True
                     st.rerun()
+
+        # On a phone the sidebar is a drawer over the chat: once a conversation
+        # is picked, get it out of the way. Last in the sidebar, so the rows
+        # above keep their places.
+        if st.session_state.pop("close_drawer", False):
+            ui.close_sidebar_on_phone(nonce=time.time())

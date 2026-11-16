@@ -61,7 +61,7 @@ PANE_EASE = ".45s cubic-bezier(.2,.8,.2,1)"
 
 _PANE_TOGGLE = (
     '<input type="checkbox" id="camera-pane-collapsed" class="camera-pane-state" '
-    'aria-label="Hide the camera panel">'
+    'aria-label="Toggle the camera panel">'
     '<label for="camera-pane-collapsed" class="camera-pane-rail" title="Show the camera panel">'
     '<span class="chevron">‹</span><span class="text">{label}</span></label>'
 )
@@ -432,7 +432,12 @@ section[data-testid="stSidebar"] .stButton > button[kind="secondary"] {{
    #camera-pane-collapsed  a checkbox, flipped by the pane's hide button and by
                        the rail. Pure CSS on purpose: a Streamlit button would
                        rerun the script, and a rerun mid-answer discards it. */
-.st-key-camera-dock {{ position: fixed; top: 0; right: 0; width: 0; height: 0; }}
+/* z-index: being fixed, the dock is a stacking context; without one the chat
+   bubbles, which come later in the page, would paint over the pane wherever
+   the two overlap. It stays under Streamlit's header and sidebar drawer. */
+.st-key-camera-dock {{
+    position: fixed; top: 0; right: 0; width: 0; height: 0; z-index: 100;
+}}
 
 .stAppViewContainer {{ transition: right {PANE_EASE}; }}
 .stApp:has(.st-key-camera-pane) .stAppViewContainer {{ right: {PANEL_WIDTH}; }}
@@ -510,14 +515,137 @@ section[data-testid="stSidebar"] .stButton > button[kind="secondary"] {{
 .camera-pane-rail:hover {{ color: var(--accent); background: rgba(13,20,34,.80); }}
 .stApp:has(#camera-pane-collapsed:checked) .camera-pane-rail {{ transform: none; }}
 
-/* Too narrow to split: the pane opens over the chat instead of beside it. */
+/* Too narrow to split: the pane opens over the chat instead of beside it.
+
+   The checkbox reads the other way round from here down: unchecked is closed,
+   so a new camera shows up as the rail instead of covering the answer, and
+   checking the box (a tap on the rail) opens the pane over the chat. */
 @media (max-width: 1100px) {{
-    .stApp:has(.st-key-camera-pane) .stAppViewContainer {{ right: {RAIL_WIDTH}; }}
+    .stApp:has(.st-key-camera-pane) .stAppViewContainer,
+    .stApp:has(#camera-pane-collapsed:checked) .stAppViewContainer {{ right: {RAIL_WIDTH}; }}
     .st-key-camera-pane {{
         width: min({PANEL_WIDTH}, 88vw);
-        box-shadow: -16px 0 40px rgba(0,0,0,.45);
+        animation: none;
+        transform: translateX(100%);
+    }}
+    .stApp:has(#camera-pane-collapsed:checked) .st-key-camera-pane {{
+        transform: none; box-shadow: -16px 0 40px rgba(0,0,0,.45);
+    }}
+    .camera-pane-rail {{ transform: none; }}
+}}
+/* ── Phones ───────────────────────────────────────────────── */
+/* Streamlit turns the sidebar into a drawer at this width; the rest follows.
+   The chat keeps the full width, and the camera pane becomes a bottom sheet:
+   closed, it is a small "Camera" pill; tapping the pill raises the sheet, and
+   the pill then stretches into the dimmed backdrop behind it, so a tap outside
+   the sheet closes it. */
+@media (max-width: 768px) {{
+    [data-testid="stMainBlockContainer"] {{
+        padding: 3.4rem .85rem 1rem;
+    }}
+    [data-testid="stBottomBlockContainer"] {{
+        padding: .5rem .85rem calc(.9rem + env(safe-area-inset-bottom));
+    }}
+
+    .masthead {{ padding: .4rem 0 1rem; }}
+    .masthead .wordmark {{ font-size: 1.9rem; }}
+    .masthead .tagline {{ font-size: .92rem; }}
+    .example {{ padding: .75rem 1rem; }}
+
+    [data-testid="stChatMessage"] {{
+        padding: .8rem .85rem; gap: .6rem; border-radius: 18px;
+    }}
+    /* Long words, links and wide tables stay inside the bubble. */
+    [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] {{
+        overflow-wrap: anywhere; min-width: 0;
+    }}
+    [data-testid="stChatMessage"] table {{ font-size: .86rem; }}
+    [data-testid="stChatMessage"] th, [data-testid="stChatMessage"] td {{
+        padding-right: .45rem;
+    }}
+    [data-testid="stChatMessage"] pre {{ overflow-x: auto; }}
+    [data-testid="stChatMessage"] img {{ max-width: 100%; height: auto; }}
+
+    /* Room for a thumb. */
+    section[data-testid="stSidebar"] .stButton > button:not([kind="primary"]) {{
+        padding: .68rem .8rem;
+    }}
+    section[data-testid="stSidebar"] .stButton > button[kind="primary"] {{
+        padding: .65rem 1rem;
+    }}
+    [class*="st-key-feedback-"] button {{ padding: .5rem .8rem; }}
+    /* The photo chip stays on one line: the name gives way, and the remove
+       button is just its ✕. */
+    .st-key-image-preview {{ flex-wrap: nowrap; }}
+    .st-key-image-preview > * {{ flex: 0 1 auto; width: auto; min-width: 0; }}
+    .st-key-image-preview button {{ padding: .5rem .6rem; }}
+    .st-key-image-preview button [data-testid="stMarkdownContainer"] {{ display: none; }}
+    .image-preview-name {{ max-width: 42vw; vertical-align: middle; }}
+
+    [data-testid="stPopoverBody"] {{
+        min-width: 0; width: calc(100vw - 1.7rem); max-width: 420px;
+    }}
+
+    /* Camera pane → bottom sheet. */
+    .stApp:has(.st-key-camera-pane) .stAppViewContainer,
+    .stApp:has(#camera-pane-collapsed:checked) .stAppViewContainer {{ right: 0; }}
+
+    .st-key-camera-pane {{
+        top: auto; bottom: 0; left: 0; right: 0;
+        width: 100%; height: auto; max-height: 80vh; max-height: 80dvh;
+        border-left: none; border-top: 1px solid var(--line);
+        border-radius: 24px 24px 0 0;
+        padding: .9rem 1.1rem calc(1.1rem + env(safe-area-inset-bottom));
+        background: rgba(8,13,24,.90);
+        transform: translateY(105%);
+    }}
+    .stApp:has(#camera-pane-collapsed:checked) .st-key-camera-pane {{
+        transform: none; box-shadow: 0 -18px 44px rgba(0,0,0,.50);
+    }}
+    .st-key-camera-pane img {{ max-height: 30vh; }}
+
+    .camera-pane-hide {{ width: 40px; height: 40px; font-size: 0; }}
+    .camera-pane-hide::after {{ content: "✕"; font-size: 1rem; }}
+
+    /* The rail → a pill in the top bar, beside the sidebar button. Streamlit's
+       header is an empty strip lying over that spot: let taps through it,
+       except on its own buttons. */
+    [data-testid="stHeader"], [data-testid="stHeader"] div {{ pointer-events: none; }}
+    [data-testid="stHeader"] :is(button, a, [role="button"]) {{ pointer-events: auto; }}
+    .camera-pane-rail {{
+        top: .68rem; left: 3.5rem; right: auto; width: auto; height: 38px;
+        flex-direction: row; gap: .4rem; padding: 0 .95rem;
+        border: 1px solid rgba(52,224,180,.35); border-radius: 999px;
+        background: rgba(13,20,34,.86); color: var(--text);
+        box-shadow: 0 6px 18px rgba(0,0,0,.35);
+        transform: none; transition: none;
+    }}
+    .camera-pane-rail::before {{
+        content: ""; width: 7px; height: 7px; border-radius: 50%;
+        background: var(--accent); box-shadow: 0 0 8px var(--accent);
+    }}
+    .camera-pane-rail .chevron {{ display: none; }}
+    .camera-pane-rail .text {{ writing-mode: horizontal-tb; }}
+    /* Sheet open: the pill becomes the backdrop behind it. */
+    .stApp:has(#camera-pane-collapsed:checked) .camera-pane-rail {{
+        inset: 0; width: auto; height: auto; padding: 0;
+        border: none; border-radius: 0; box-shadow: none;
+        background: rgba(3,6,12,.55);
+        -webkit-backdrop-filter: none; backdrop-filter: none;
+        z-index: 99;   /* under the sheet */
+    }}
+    .stApp:has(#camera-pane-collapsed:checked) .camera-pane-rail > *,
+    .stApp:has(#camera-pane-collapsed:checked) .camera-pane-rail::before {{
+        display: none;
     }}
 }}
+
+/* Touch screens keep a button "hovered" after a tap: don't leave it lifted. */
+@media (hover: none) {{
+    .stButton > button:hover, .st-key-composer-add button:hover,
+    [data-testid="stChatInputSubmitButton"]:not(:disabled):hover {{ transform: none; }}
+}}
+
 @media (prefers-reduced-motion: reduce) {{
     .stAppViewContainer, .st-key-camera-pane, .camera-pane-rail,
     [data-testid="stChatMessage"], .stButton > button {{
@@ -557,6 +685,29 @@ def masthead(title: str = PAGE_TITLE, tagline: str = TAGLINE) -> None:
         f'<div class="tagline">{tagline}</div></div>',
         unsafe_allow_html=True,
     )
+
+
+# Streamlit's phone drawer covers the chat and stays open after a tap inside
+# it. This presses its own close button, on phone widths only.
+_CLOSE_DRAWER = """
+<script data-run="{nonce}">
+if (window.matchMedia("(max-width: 768px)").matches) {{
+    const close = document.querySelector(
+        '[data-testid="stSidebarCollapseButton"] button, ' +
+        '[data-testid="stSidebar"] [data-testid="stBaseButton-headerNoPadding"]');
+    if (close) close.click();
+}}
+</script>
+"""
+
+
+def close_sidebar_on_phone(nonce: object = "") -> None:
+    """Close the sidebar drawer once, if the screen is phone-sized.
+
+    Call it on the run after a tap that picked something from the sidebar.
+    nonce: anything that differs between calls, so the script runs each time.
+    """
+    st.html(_CLOSE_DRAWER.format(nonce=nonce), unsafe_allow_javascript=True)
 
 
 def example_card(text: str = EXAMPLE) -> None:
