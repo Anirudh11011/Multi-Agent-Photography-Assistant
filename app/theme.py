@@ -181,7 +181,8 @@ section[data-testid="stSidebar"] [data-testid="stCaptionContainer"] {{
 .st-key-composer [data-testid="stChatInput"] {{ flex: 1 1 auto; min-width: 0; }}
 .st-key-composer-add {{ flex: none; }}
 .st-key-composer-add button {{
-    width: 46px; height: 46px; min-height: 0; padding: 0;
+    position: relative;
+    width: 46px; height: 46px; min-height: 0; padding: 0; margin: 0;
     display: grid; place-items: center;
     border: none !important; border-radius: 50% !important;
     background: var(--gradient) !important; color: var(--on-accent) !important;
@@ -189,7 +190,22 @@ section[data-testid="stSidebar"] [data-testid="stCaptionContainer"] {{
     box-shadow: 0 6px 18px rgba(52,224,180,.30);
     transition: transform .15s ease, box-shadow .2s ease;
 }}
-.st-key-composer-add button p {{ font-size: 1.5rem; color: var(--on-accent); margin: 0; }}
+/* The "+" text sits off-centre inside Streamlit's label wrappers (font
+   baseline, line height, the hidden chevron's slot), so it is hidden — still
+   read by screen readers — and the plus is drawn as two bars at the exact
+   centre of the circle. */
+.st-key-composer-add button > * {{
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip-path: inset(50%); white-space: nowrap;
+}}
+.st-key-composer-add button::before,
+.st-key-composer-add button::after {{
+    content: ""; position: absolute; top: 50%; left: 50%;
+    width: 18px; height: 2.5px; border-radius: 2px;
+    background: var(--on-accent);
+    transform: translate(-50%, -50%);
+}}
+.st-key-composer-add button::after {{ transform: translate(-50%, -50%) rotate(90deg); }}
 .st-key-composer-add button:hover {{
     transform: scale(1.06); box-shadow: 0 8px 22px rgba(52,224,180,.42);
 }}

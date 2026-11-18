@@ -70,7 +70,7 @@ def render(chat: dict) -> tuple[list, str | None]:
             st.warning(st.session_state.image_error, icon=":material/broken_image:")
 
         with st.container(key="composer", horizontal=True,
-                          vertical_alignment="bottom", gap="small"):
+                          vertical_alignment="center", gap="small"):
             with st.popover("+", key="composer-add", help="Add a document or an image"):
                 docs = st.file_uploader(
                     "Doc upload", type=FILE_TYPES, accept_multiple_files=True,
