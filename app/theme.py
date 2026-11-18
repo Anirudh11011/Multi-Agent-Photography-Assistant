@@ -515,31 +515,31 @@ section[data-testid="stSidebar"] .stButton > button[kind="secondary"] {{
 .camera-pane-rail:hover {{ color: var(--accent); background: rgba(13,20,34,.80); }}
 .stApp:has(#camera-pane-collapsed:checked) .camera-pane-rail {{ transform: none; }}
 
-/* Too narrow to split: the pane opens over the chat instead of beside it.
-
-   The checkbox reads the other way round from here down: unchecked is closed,
-   so a new camera shows up as the rail instead of covering the answer, and
-   checking the box (a tap on the rail) opens the pane over the chat. */
+/* Too narrow to split: the pane opens over the chat instead of beside it. The
+   checkbox means the same as on desktop (unchecked = open), so a new camera
+   still opens by itself. The chat keeps its full width while the pane is open
+   and gives up only the rail's width once it is collapsed. */
 @media (max-width: 1100px) {{
-    .stApp:has(.st-key-camera-pane) .stAppViewContainer,
+    .stApp:has(.st-key-camera-pane) .stAppViewContainer {{ right: 0; }}
     .stApp:has(#camera-pane-collapsed:checked) .stAppViewContainer {{ right: {RAIL_WIDTH}; }}
     .st-key-camera-pane {{
         width: min({PANEL_WIDTH}, 88vw);
-        animation: none;
-        transform: translateX(100%);
+        box-shadow: -16px 0 40px rgba(0,0,0,.45);
     }}
-    .stApp:has(#camera-pane-collapsed:checked) .st-key-camera-pane {{
-        transform: none; box-shadow: -16px 0 40px rgba(0,0,0,.45);
-    }}
-    .camera-pane-rail {{ transform: none; }}
 }}
 /* ── Phones ───────────────────────────────────────────────── */
 /* Streamlit turns the sidebar into a drawer at this width; the rest follows.
-   The chat keeps the full width, and the camera pane becomes a bottom sheet:
-   closed, it is a small "Camera" pill; tapping the pill raises the sheet, and
-   the pill then stretches into the dimmed backdrop behind it, so a tap outside
-   the sheet closes it. */
+   The chat keeps the full width, and the camera pane becomes a compact card
+   under the top bar: it opens by itself when a camera is named, stays clear of
+   the input bar, and its ✕ folds it into a small "Camera" pill in the top bar.
+   A tap on the pill brings the card back. */
 @media (max-width: 768px) {{
+    /* Glass blur on every bubble makes phone scrolling stutter: solid tint. */
+    :root {{ --glass: rgba(13, 20, 34, .84); }}
+    [data-testid="stChatMessage"], .example {{
+        -webkit-backdrop-filter: none; backdrop-filter: none;
+    }}
+
     [data-testid="stMainBlockContainer"] {{
         padding: 3.4rem .85rem 1rem;
     }}
@@ -586,23 +586,40 @@ section[data-testid="stSidebar"] .stButton > button[kind="secondary"] {{
         min-width: 0; width: calc(100vw - 1.7rem); max-width: 420px;
     }}
 
-    /* Camera pane → bottom sheet. */
+    /* Camera pane → card under the top bar. */
     .stApp:has(.st-key-camera-pane) .stAppViewContainer,
     .stApp:has(#camera-pane-collapsed:checked) .stAppViewContainer {{ right: 0; }}
 
     .st-key-camera-pane {{
-        top: auto; bottom: 0; left: 0; right: 0;
-        width: 100%; height: auto; max-height: 80vh; max-height: 80dvh;
-        border-left: none; border-top: 1px solid var(--line);
-        border-radius: 24px 24px 0 0;
-        padding: .9rem 1.1rem calc(1.1rem + env(safe-area-inset-bottom));
-        background: rgba(8,13,24,.90);
-        transform: translateY(105%);
+        top: calc(3.4rem + env(safe-area-inset-top)); bottom: auto;
+        left: .75rem; right: .75rem;
+        width: auto; height: auto; max-height: 46vh; max-height: 46dvh;
+        flex-direction: row; flex-wrap: wrap; align-items: flex-start;
+        gap: .55rem .75rem;
+        padding: .6rem .85rem .85rem;
+        border: 1px solid rgba(52,224,180,.28); border-radius: 20px;
+        background: rgba(8,13,24,.95);
+        -webkit-backdrop-filter: none; backdrop-filter: none;
+        box-shadow: 0 18px 44px rgba(0,0,0,.55);
+        animation: camera-card-in .3s ease;
+        transition: opacity .25s ease, transform .25s ease, visibility .25s;
+    }}
+    @keyframes camera-card-in {{
+        from {{ opacity: 0; transform: translateY(-10px); }}
     }}
     .stApp:has(#camera-pane-collapsed:checked) .st-key-camera-pane {{
-        transform: none; box-shadow: 0 -18px 44px rgba(0,0,0,.50);
+        opacity: 0; transform: translateY(-10px);
+        visibility: hidden; pointer-events: none;
     }}
-    .st-key-camera-pane img {{ max-height: 30vh; }}
+    /* Header full width; the cameras share the row below it. */
+    .st-key-camera-pane > * {{ flex: 1 1 0; width: auto; min-width: 0; }}
+    .st-key-camera-pane > :has(.camera-pane-head) {{ flex-basis: 100%; }}
+    .st-key-camera-pane [data-testid="stElementContainer"]:has([data-testid="stImage"])
+        ~ [data-testid="stElementContainer"]:has([data-testid="stImage"]) {{
+        border-top: none; padding-top: 0;
+    }}
+    .st-key-camera-pane img {{ max-height: 26vh; max-height: 26dvh; border-radius: 12px; }}
+    .st-key-camera-pane [data-testid="stImageCaption"] {{ font-size: .8rem; }}
 
     .camera-pane-hide {{ width: 40px; height: 40px; font-size: 0; }}
     .camera-pane-hide::after {{ content: "✕"; font-size: 1rem; }}
@@ -618,7 +635,13 @@ section[data-testid="stSidebar"] .stButton > button[kind="secondary"] {{
         border: 1px solid rgba(52,224,180,.35); border-radius: 999px;
         background: rgba(13,20,34,.86); color: var(--text);
         box-shadow: 0 6px 18px rgba(0,0,0,.35);
-        transform: none; transition: none;
+        -webkit-backdrop-filter: none; backdrop-filter: none;
+        /* Hidden while the card is open; shown once it is folded away. */
+        transform: none; opacity: 0; visibility: hidden; pointer-events: none;
+        transition: opacity .2s ease, visibility .2s;
+    }}
+    .stApp:has(#camera-pane-collapsed:checked) .camera-pane-rail {{
+        opacity: 1; visibility: visible; pointer-events: auto;
     }}
     .camera-pane-rail::before {{
         content: ""; width: 7px; height: 7px; border-radius: 50%;
@@ -626,18 +649,6 @@ section[data-testid="stSidebar"] .stButton > button[kind="secondary"] {{
     }}
     .camera-pane-rail .chevron {{ display: none; }}
     .camera-pane-rail .text {{ writing-mode: horizontal-tb; }}
-    /* Sheet open: the pill becomes the backdrop behind it. */
-    .stApp:has(#camera-pane-collapsed:checked) .camera-pane-rail {{
-        inset: 0; width: auto; height: auto; padding: 0;
-        border: none; border-radius: 0; box-shadow: none;
-        background: rgba(3,6,12,.55);
-        -webkit-backdrop-filter: none; backdrop-filter: none;
-        z-index: 99;   /* under the sheet */
-    }}
-    .stApp:has(#camera-pane-collapsed:checked) .camera-pane-rail > *,
-    .stApp:has(#camera-pane-collapsed:checked) .camera-pane-rail::before {{
-        display: none;
-    }}
 }}
 
 /* Touch screens keep a button "hovered" after a tap: don't leave it lifted. */
