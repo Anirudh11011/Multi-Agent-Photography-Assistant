@@ -61,7 +61,7 @@ if not os.getenv("GROQ_API_KEY"):
 chat = sessions.current_chat()
 # Read before the history renders — the input bar is pinned to the bottom wherever
 # it's called — so the camera panel can open while the agents are still working.
-attachments, prompt = composer.render(chat)
+attachments, prompt, mode = composer.render(chat)
 
 # This question's cameras, or the last turn's when it names none.
 last = sessions.last_turn(chat)
@@ -75,5 +75,5 @@ if not sessions.turn_count(chat):
 chat_view.render_history(chat)
 
 if prompt:
-    chat_view.answer_turn(chat, prompt, attachments, shown_cameras)
+    chat_view.answer_turn(chat, prompt, attachments, shown_cameras, mode=mode)
     st.rerun()

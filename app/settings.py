@@ -21,6 +21,17 @@ IMAGE_TYPES = ["jpg", "jpeg", "png", "webp"]
 IMAGE_MAX_EDGE = 1568
 IMAGE_JPEG_QUALITY = 88
 
+# ── Photo editing ────────────────────────────────────────────
+# Agent 1 (the image analyst) is VISION_MODEL. Agent 2 (the editor) never sees the
+# photo, only the plan, so it runs on a text model that is good at tool calling.
+EDITOR_MODEL = MODEL_NAME
+# Edits run on the uploaded photo at up to this long edge (px), not on the small
+# copy the vision model sees, so the download is close to full resolution.
+EDIT_MAX_EDGE = 4096
+EDIT_DOWNLOAD_QUALITY = 92
+# Upper bound on the editor's model turns, so a confused run cannot loop forever.
+EDIT_MAX_STEPS = 12
+
 TOP_K = 4
 RELEVANCE_FLOOR = 0.25      # below this, retrieval is treated as a miss
 MAX_CONTEXT_CHARS = 12000   # budget for attached-file context

@@ -39,6 +39,9 @@ BOT_AVATAR = ":material/photo_camera:"
 
 STEP_LABELS = {
     "image_agent":        ("Image",     "Looked at your photo"),
+    "image_router":       ("Intake",    "Asking about the photo, or editing it?"),
+    "image_analyst":      ("Analysis",  "Studied the photo and planned the edits"),
+    "image_editor":       ("Editing",   "Applied the edits with the editing tools"),
     "triage":             ("Intake",    "Worked out what you're asking"),
     "redirect":           ("Replied",   "No search needed for this message"),
     "gather_context":     ("Context",   "Gathered reference material"),

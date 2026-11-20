@@ -10,6 +10,13 @@ pypdf
 docx2txt
 streamlit
 ddgs
+
+# Photo editing: the MCP tool server and the tools it wraps
+mcp
+langchain-mcp-adapters
+pillow
+numpy
+opencv-python-headless
 # unstructured
 
 # Tracing and conversation recording
