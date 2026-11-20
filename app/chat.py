@@ -8,15 +8,18 @@ from app import theme as ui
 from app import conversation_store as store
 from app import observability as obs
 from app import prompts as P
-from app.attachments import build_attached_context, prepare_image
+from app import image_editing as editing
+from app.attachments import (build_attached_context, prepare_image,
+                             working_download, working_preview)
 from app.pipeline import initial_state
 from app.resources import get_graph
 from app.sessions import add_turn, format_history, session_user_id, turn_count, turns
-from app.settings import MODEL_NAME, TEMPERATURE, VISION_MODEL
+from app.settings import EDIT_MAX_EDGE, MODEL_NAME, TEMPERATURE, VISION_MODEL
 
 SOURCE_BADGE = {
     "attached": "Your attached manual",
     "image": "Your photo",
+    "edit": "Photo editor",
     "retrieved": "Built-in guides",
     "web": "Web search",
     "none": "No reliable source",
@@ -27,6 +30,7 @@ SOURCE_BADGE = {
 SOURCE_STEP = {
     "attached": "your attached manual",
     "image": "your photo",
+    "edit": "your photo",
     "retrieved": "the built-in guides",
     "web": "a web search",
     "none": "the remaining sources",
@@ -63,6 +67,38 @@ def _show_image(chat: dict, turn: dict) -> None:
         st.image(chat["image"]["bytes"], width=260)
 
 
+def _working_copy(chat: dict) -> dict:
+    """The conversation's photo, copied into its editing folder on first use."""
+    image = chat["image"]
+    if not editing.exists(image.get("edit_dir", ""), image.get("original_id", "")):
+        folder = editing.workdir(st.session_state.current)
+        image["edit_dir"] = str(folder)
+        image["original_id"] = editing.import_original(folder, image["bytes"],
+                                                       EDIT_MAX_EDGE)
+        image["current_id"] = image["original_id"]
+    elif not editing.exists(image["edit_dir"], image.get("current_id", "")):
+        image["current_id"] = image["original_id"]
+    return image
+
+
+def _show_edit(edit: dict, key: str, name: str) -> None:
+    """Before and after, side by side, with the edited photo to download."""
+    before = editing.image_path(edit["dir"], edit["before"])
+    after = editing.image_path(edit["dir"], edit["after"])
+    if not (before.exists() and after.exists()):
+        ui.caption("This edit's images are no longer on the server.")
+        return
+    left, right = st.columns(2)
+    with left:
+        st.image(working_preview(str(before)), caption="Before")
+    with right:
+        st.image(working_preview(str(after)), caption="After")
+    stem = name.rsplit(".", 1)[0] or "photo"
+    st.download_button("Download edited photo", data=working_download(str(after)),
+                       file_name=f"{stem}-edited.jpg", mime="image/jpeg",
+                       icon=":material/download:", key=f"dl-{key}")
+
+
 def render_history(chat: dict) -> None:
     for index, turn in enumerate(turns(chat)):
         with ui.user_message():
@@ -73,6 +109,9 @@ def render_history(chat: dict) -> None:
             if turn.get("steps"):
                 ui.render_trace(turn["steps"])
             st.markdown(turn["answer"])
+            if turn.get("edit"):
+                _show_edit(turn["edit"], f"{turn.get('message_id')}-{index}",
+                           (chat.get("image") or {}).get("name", "photo"))
             # caption() renders raw HTML, so the trace link has to be an anchor tag.
             trace_link = (f' · <a href="{turn["run_url"]}" target="_blank">view trace</a>'
                           if turn.get("run_url") else "")
@@ -98,6 +137,17 @@ def _step_body(node: str, payload: dict, source: str, status) -> str:
         )
         return (f"**Verdict:** {payload.get('verdict', '')}\n\n"
                 f"**Approved:** {ok}")
+    if node == "image_router":
+        status.update(label=ui.step_status_label(node))
+        return f"**Request:** {payload.get('image_intent', '')}"
+    if node == "image_analyst":
+        status.update(label=ui.step_status_label(node))
+        return payload.get("edit_plan") or payload.get("final_response") or ""
+    if node == "image_editor":
+        status.update(label=ui.step_status_label(node))
+        log = payload.get("edit_log") or []
+        return ("**Tool calls:**\n\n" + "\n".join(f"- `{c}`" for c in log)
+                if log else "_No tools were called._")
     if node == "validate":
         checks = payload.get("validation") or []
         status.update(label=ui.step_status_label(node))
@@ -108,8 +158,13 @@ def _step_body(node: str, payload: dict, source: str, status) -> str:
     return payload.get("final_response") or payload.get("analysis_1") or ""
 
 
-def answer_turn(chat: dict, prompt: str, attachments, shown_cameras: list) -> None:
-    """Run the pipeline for one question, render it live, and record the turn."""
+def answer_turn(chat: dict, prompt: str, attachments, shown_cameras: list,
+                mode: str = "") -> None:
+    """Run the pipeline for one question, render it live, and record the turn.
+
+    mode "auto_edit" is the Auto-improve button: the photo is edited without a
+    typed instruction.
+    """
     environment = obs.environment()
     image = chat.get("image")
     # The photo is shown with the first question about it, then locked in.
@@ -126,12 +181,17 @@ def answer_turn(chat: dict, prompt: str, attachments, shown_cameras: list) -> No
         with st.spinner("Reading your manual"):
             attached_context = build_attached_context(attachments, prompt) if attachments else ""
         image_url, image_exif = prepare_image(image["bytes"]) if image else ("", "")
+        # Edits start from the latest edited version (or the original after a reset).
+        work = _working_copy(chat) if image else {}
+        before_id = work.get("current_id", "")
 
         state = initial_state(prompt, format_history(chat["history"]), attached_context,
-                              image_url=image_url, image_exif=image_exif)
+                              image_url=image_url, image_exif=image_exif, mode=mode,
+                              edit_dir=work.get("edit_dir", ""),
+                              edit_source_id=before_id)
         stages = state["stages"]
 
-        steps, answer, source, kind = [], "", "", ""
+        steps, answer, source, kind, edited_id, plan = [], "", "", "", "", ""
         badge_box = st.container()
         trace_box = st.container()
         turn_index = turn_count(chat)
@@ -144,14 +204,17 @@ def answer_turn(chat: dict, prompt: str, attachments, shown_cameras: list) -> No
                             "has_image": bool(image),
                             "stages": stages, "prompt_version": P.PROMPT_VERSION},
         )
-        with st.status("Finding a reliable source", expanded=False) as status, \
-                obs.traced_run() as run:
+        with st.status("Looking at your photo" if image else "Finding a reliable source",
+                       expanded=False) as status, obs.traced_run() as run:
             for update in get_graph().stream(state, stream_mode="updates", config=config):
                 for node, payload in update.items():
-                    if node == "triage":
+                    if node in ("triage", "image_analyst"):
                         kind = payload.get("kind", "")
+                        plan = payload.get("edit_plan", "")
                     elif node == "gather_context":
                         source = payload.get("source", "")
+                    elif node == "image_editor":
+                        edited_id = payload.get("edited_image_id", "")
                     steps.append((node, _step_body(node, payload, source, status)))
                     if payload.get("final_response"):
                         answer = payload["final_response"]
@@ -164,6 +227,11 @@ def answer_turn(chat: dict, prompt: str, attachments, shown_cameras: list) -> No
         with trace_box:
             ui.render_trace(steps)
         st.markdown(answer)
+        edit = None
+        if edited_id:
+            edit = {"dir": work["edit_dir"], "before": before_id, "after": edited_id}
+            image["current_id"] = edited_id          # the next edit stacks on this
+            _show_edit(edit, f"live-{turn_index}", image["name"])
         ui.caption(f"Answered in {elapsed:.1f}s")
 
     if chat["title"] == "New conversation":
@@ -187,11 +255,12 @@ def answer_turn(chat: dict, prompt: str, attachments, shown_cameras: list) -> No
         meta={"attached_files": [f.name for f in (attachments or [])],
               "image": image["name"] if image else None,
               "stages": stages, "temperature": TEMPERATURE,
-              "prompt_version": P.PROMPT_VERSION, "request_kind": kind},
+              "prompt_version": P.PROMPT_VERSION, "request_kind": kind,
+              "edit_mode": mode or None, "edit_plan": plan or None},
         **run.as_dict(),
     )
 
     add_turn(chat, prompt, answer, image_shown=image_shown,
              steps=steps, source=source, elapsed=elapsed,
              message_id=message_id, run_id=run.run_id,
-             run_url=run.run_url, cameras=shown_cameras)
+             run_url=run.run_url, cameras=shown_cameras, edit=edit)

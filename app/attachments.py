@@ -10,10 +10,11 @@ import streamlit as st
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from PIL import ExifTags, Image, ImageOps
 
+from app import image_ops
 from app.loaders import load_file, CHUNK_SIZE, CHUNK_OVERLAP
 from app.resources import get_embeddings
 from app.settings import (MAX_CONTEXT_CHARS, MAX_ATTACHED_CHUNKS,
-                          IMAGE_MAX_EDGE, IMAGE_JPEG_QUALITY)
+                          IMAGE_MAX_EDGE, IMAGE_JPEG_QUALITY, EDIT_DOWNLOAD_QUALITY)
 
 FILE_TYPES = ["pdf", "docx", "doc", "csv", "html", "htm", "txt", "md", "json", "py"]
 
@@ -93,6 +94,20 @@ def prepare_image(image_bytes: bytes) -> tuple[str, str]:
     img.save(buf, format="JPEG", quality=IMAGE_JPEG_QUALITY)
     data_url = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
     return data_url, exif
+
+
+# Working images are never overwritten (every edit gets a new id), so a path is
+# a safe cache key.
+@st.cache_data(show_spinner=False, max_entries=64)
+def working_preview(path: str, max_edge: int = 900) -> bytes:
+    """A small JPEG of a working image, for showing in the chat."""
+    return image_ops.encode_jpeg(path, max_edge, 85)
+
+
+@st.cache_data(show_spinner=False, max_entries=8)
+def working_download(path: str) -> bytes:
+    """A working image as a full-size JPEG, for the download button."""
+    return image_ops.encode_jpeg(path, None, EDIT_DOWNLOAD_QUALITY)
 
 
 @st.cache_data(show_spinner=False)

@@ -13,9 +13,16 @@ falls through to the next source:
           ↓ rejected
     "I don't have relevant information"
 
-A conversation with a photo attached skips the ladder entirely:
+A conversation with a photo attached skips the ladder entirely. The router
+decides whether the user is asking about the photo or wants it edited:
 
-    image_agent (vision model looks at the photo) → validate
+    image_router ─ask→  image_agent (vision model answers about the photo) → validate
+                 └edit→ image_analyst (Agent 1, vision: writes the edit plan)
+                           → image_editor (Agent 2: calls the MCP editing tools)
+                           → validate
+
+The Auto-improve button enters the edit branch directly (mode "auto_edit"), and
+the analyst then decides every edit itself.
 
 Nothing here touches Streamlit; resources.py holds the cached, compiled graph.
 """
@@ -27,11 +34,13 @@ from typing import TypedDict
 from langchain_groq import ChatGroq
 from langgraph.graph import StateGraph, START, END
 
+from app import image_editing as editing
 from app import prompts as P
 from app.guardrails import check_format, redact_secrets, strip_invented_urls
 from app.settings import (
     MODEL_NAME, SUPERVISOR_MODEL, TEMPERATURE, TOP_K, RELEVANCE_FLOOR,
     WEB_RESULTS, REFUSAL, VISION_MODEL, VISION_TEMPERATURE,
+    EDITOR_MODEL, EDIT_MAX_STEPS, IMAGE_MAX_EDGE, IMAGE_JPEG_QUALITY,
 )
 
 VISION_NOT_CONFIGURED = (
@@ -58,10 +67,20 @@ class AgentState(TypedDict):
     analysis_1: str
     final_response: str
     validation: list      # findings from the validate node, shown in the trace
+    # Photo editing. edit_dir/edit_source_id name the working image the next edit
+    # starts from (the latest edited version); both "" when editing is unavailable.
+    mode: str             # "" (typed message) | "auto_edit" (Auto-improve button)
+    edit_dir: str
+    edit_source_id: str
+    image_intent: str     # "ask" | "edit", set by image_router
+    edit_plan: str        # Agent 1's plan, handed to Agent 2
+    edited_image_id: str  # the result; "" when nothing was changed
+    edit_log: list        # Agent 2's tool calls, for the trace
 
 
 def initial_state(user_input: str, history: str, attached_context: str,
-                  image_url: str = "", image_exif: str = "") -> AgentState:
+                  image_url: str = "", image_exif: str = "", *, mode: str = "",
+                  edit_dir: str = "", edit_source_id: str = "") -> AgentState:
     """A fresh state for one turn, with the ladder this turn will climb."""
     # The ladder: attached files first (when present), then archive, then web.
     # An image turn never climbs it; the stages are kept for the trace metadata.
@@ -73,7 +92,30 @@ def initial_state(user_input: str, history: str, attached_context: str,
             "image_url": image_url, "image_exif": image_exif,
             "context": "", "source": "", "stages": stages, "stage": 0,
             "approved": False, "verdict": "", "attempts": [],
-            "analysis_1": "", "final_response": "", "validation": []}
+            "analysis_1": "", "final_response": "", "validation": [],
+            "mode": mode, "edit_dir": edit_dir, "edit_source_id": edit_source_id,
+            "image_intent": "", "edit_plan": "", "edited_image_id": "",
+            "edit_log": []}
+
+
+def edit_answer(plan: dict, result: "editing.EditResult | None") -> str:
+    """What the user reads after an edit, built from what was actually applied."""
+    if result is not None and result.error:
+        return ("I couldn't edit the photo this time: the editing tools failed "
+                f"(`{result.error[:200]}`). Your photo is unchanged.")
+    parts = []
+    if plan.get("summary"):
+        parts.append(plan["summary"])
+    edits = result.edits if result else []
+    if edits:
+        parts.append("**Edits applied**\n" + "\n".join(f"- {e}" for e in edits))
+    else:
+        parts.append("No edits were applied, so your photo is unchanged.")
+    if plan.get("cannot"):
+        parts.append(f"**Not possible with the editing tools:** {plan['cannot']}")
+    if result and result.notes:
+        parts.append(f"_Editor note: {result.notes}_")
+    return "\n\n".join(parts)
 
 
 def web_search(query: str) -> str:
@@ -106,6 +148,59 @@ def build_graph(vector_store):
     vision_llm = (None if VISION_MODEL.startswith("REPLACE_") else
                   ChatGroq(model=VISION_MODEL, api_key=os.getenv("GROQ_API_KEY"),
                            temperature=VISION_TEMPERATURE))
+    # Agent 2 only maps a written plan onto tool calls: temperature 0.
+    editor_llm = ChatGroq(model=EDITOR_MODEL, api_key=os.getenv("GROQ_API_KEY"),
+                          temperature=0)
+
+    def image_router(state: AgentState) -> AgentState:
+        """Ask about the photo, or edit it? The Auto-improve button is always an edit."""
+        if state.get("mode") == "auto_edit":
+            state["image_intent"] = "edit"
+        elif not state.get("edit_source_id"):
+            state["image_intent"] = "ask"            # no working copy: cannot edit
+        else:
+            reply = grader_llm.invoke(P.image_router_messages(
+                state["user_input"], state.get("history") or "")).content
+            state["image_intent"] = P.parse_image_route(reply)
+        return state
+
+    def image_analyst(state: AgentState) -> AgentState:
+        """Agent 1: look at the current version of the photo and write the edit plan."""
+        state["kind"], state["source"] = "edit", "edit"
+        if vision_llm is None:
+            state["final_response"] = VISION_NOT_CONFIGURED
+            return state
+        folder, image_id = state["edit_dir"], state["edit_source_id"]
+        try:
+            tools = editing.tool_catalog()
+        except Exception as exc:
+            state["final_response"] = edit_answer({}, editing.EditResult(
+                image_id=image_id, error=f"{type(exc).__name__}: {exc}"))
+            return state
+        state["edit_plan"] = vision_llm.invoke(P.edit_plan_messages(
+            mode="auto" if state.get("mode") == "auto_edit" else "requested",
+            message=state["user_input"], history=state.get("history") or "",
+            image_url=editing.data_url(folder, image_id, IMAGE_MAX_EDGE,
+                                       IMAGE_JPEG_QUALITY),
+            exif=state.get("image_exif") or "",
+            stats=editing.measure(folder, image_id), tools=tools,
+        )).content
+        plan = P.parse_edit_plan(state["edit_plan"])
+        if not plan["has_edits"]:
+            # Nothing to do (or nothing possible): answer now, skip the editor.
+            state["final_response"] = edit_answer(plan, None)
+        return state
+
+    def image_editor(state: AgentState) -> AgentState:
+        """Agent 2: carry out the plan with the MCP editing tools."""
+        result = editing.run_editor(editor_llm, state["edit_plan"], state["edit_dir"],
+                                    state["edit_source_id"], EDIT_MAX_STEPS)
+        if result.image_id != state["edit_source_id"]:
+            state["edited_image_id"] = result.image_id
+        state["edit_log"] = result.calls or ([result.error] if result.error else [])
+        state["final_response"] = edit_answer(P.parse_edit_plan(state["edit_plan"]),
+                                              result)
+        return state
 
     def image_agent(state: AgentState) -> AgentState:
         """The vision model looks at the attached photo and writes the answer."""
@@ -255,8 +350,15 @@ def build_graph(vector_store):
         return state
 
     def route_start(state: AgentState) -> str:
-        """Only a turn with a photo attached goes to the image analyst."""
-        return "image_agent" if state.get("image_url") else "triage"
+        """Only a turn with a photo attached goes down the image branch."""
+        return "image_router" if state.get("image_url") else "triage"
+
+    def route_after_image_router(state: AgentState) -> str:
+        return "image_analyst" if state["image_intent"] == "edit" else "image_agent"
+
+    def route_after_analyst(state: AgentState) -> str:
+        """A plan with edits goes to the editor; no plan (or an error) is answered now."""
+        return "validate" if state.get("final_response") else "image_editor"
 
     def route_after_triage(state: AgentState) -> str:
         return "redirect" if state["kind"] in ("smalltalk", "outside") else "gather_context"
@@ -277,9 +379,19 @@ def build_graph(vector_store):
     builder.add_node("agent_2", agent_2)
     builder.add_node("validate", validate)
     builder.add_node("image_agent", image_agent)
+    builder.add_node("image_router", image_router)
+    builder.add_node("image_analyst", image_analyst)
+    builder.add_node("image_editor", image_editor)
 
     builder.add_conditional_edges(START, route_start,
-                                  {"image_agent": "image_agent", "triage": "triage"})
+                                  {"image_router": "image_router", "triage": "triage"})
+    builder.add_conditional_edges("image_router", route_after_image_router,
+                                  {"image_analyst": "image_analyst",
+                                   "image_agent": "image_agent"})
+    builder.add_conditional_edges("image_analyst", route_after_analyst,
+                                  {"image_editor": "image_editor",
+                                   "validate": "validate"})
+    builder.add_edge("image_editor", "validate")
     builder.add_edge("image_agent", "validate")
     builder.add_conditional_edges("triage", route_after_triage,
                                   {"redirect": "redirect",
